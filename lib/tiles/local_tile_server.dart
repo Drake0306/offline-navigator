@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
@@ -45,11 +46,13 @@ class LocalTileServer {
     // matched by the pattern suffix, not included in the captured value).
     router.get('/tiles/<z>/<x>/<y>.mvt',
         (Request req, String z, String x, String y) async {
-      final bytes = await reader.readTile(
-        int.parse(z),
-        int.parse(x),
-        int.parse(y),
-      );
+      final zi = int.tryParse(z);
+      final xi = int.tryParse(x);
+      final yi = int.tryParse(y);
+      if (zi == null || xi == null || yi == null) {
+        return Response.notFound('no tile');
+      }
+      final bytes = await reader.readTile(zi, xi, yi);
       if (bytes == null) return Response.notFound('no tile');
       return Response.ok(bytes, headers: {
         'content-type': 'application/x-protobuf',
@@ -66,7 +69,14 @@ class LocalTileServer {
         (Request req, String stack, String range) async {
       final decodedStack = Uri.decodeComponent(stack);
       final decodedRange = Uri.decodeComponent(range);
-      final file = File('$glyphsDir/$decodedStack/$decodedRange.pbf');
+      final base = p.normalize(Directory(glyphsDir).absolute.path);
+      final target = p.normalize(
+        File('$glyphsDir/$decodedStack/$decodedRange.pbf').absolute.path,
+      );
+      if (!p.isWithin(base, target)) {
+        return Response.notFound('glyph not found');
+      }
+      final file = File(target);
       if (!await file.exists()) return Response.notFound('no glyph');
       return Response.ok(
         await file.readAsBytes(),

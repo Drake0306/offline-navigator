@@ -37,6 +37,19 @@ void main() {
     final res = await _get('${server.baseUrl}/tiles/0/9999/9999.mvt');
     expect(res.statusCode, 404);
   });
+
+  test('404 for path-traversal attempt on fonts route', () async {
+    // A traversal payload such as ..%2f..%2fetc%2fpasswd must not escape
+    // glyphsDir — the containment check must return 404.
+    final res = await _get(
+        '${server.baseUrl}/fonts/..%2f..%2f..%2f..%2fetc/passwd');
+    expect(res.statusCode, 404);
+  });
+
+  test('404 for non-numeric tile coordinates', () async {
+    final res = await _get('${server.baseUrl}/tiles/abc/x/y.mvt');
+    expect(res.statusCode, 404);
+  });
 }
 
 Future<_Resp> _get(String url) async {
