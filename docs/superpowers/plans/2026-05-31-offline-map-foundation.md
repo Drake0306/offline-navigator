@@ -69,7 +69,7 @@ README.md                                 build + run instructions
 
 ## Task 0: Prepare the toolchain (Flutter upgrade + tile CLI)
 
-**Why:** `maplibre` ^0.4.0 needs Flutter ≥3.35 / Dart ≥3.9; the box has 3.29.2 / 3.7.2. The `pmtiles` CLI is not installed.
+**Why:** `maplibre` ^0.3.5 (latest) needs Flutter ≥3.35 / Dart ≥3.9; the box has 3.29.2 / 3.7.2. The `pmtiles` CLI is not installed.
 
 **Files:** none (environment only).
 
@@ -1107,7 +1107,7 @@ git commit -m "chore: add iOS/Android location permission configuration"
 - Create: `lib/map/map_screen.dart`
 - Test: `test/map/map_screen_test.dart`
 
-> **API confirm note (required first step):** the `maplibre` 0.4.0 controller/source/layer/camera API could not be fully scraped from the JS-rendered docs. Before writing the rendering code, read the installed package's real API and reconcile the names used below (`MapLibreMap`, `MapOptions(center: Position(lng,lat), zoom, pitch, bearing)`, `onMapCreated`, `onStyleLoaded`, the controller's `addImage`/`addSource`/`addLayer`/`animateCamera`, `GeoJsonSource`, `SymbolStyleLayer` with `iconImage`/`iconRotate`).
+> **API confirm note (required first step):** parts of the `maplibre` 0.3.5 source/layer API could not be fully scraped from the JS-rendered docs (the camera/controller facts ARE confirmed — see the header block). Before writing the rendering code, read the installed package's real API and reconcile the names used below. Confirmed: widget `MapLibreMap`; `MapOptions`; controller `MapController.animateCamera({Geographic? center, double? zoom, double? bearing, double? pitch})` / `moveCamera` / `getCamera` / `setStyle`; lifecycle `onMapCreated(MapController)` and `onStyleLoaded(StyleController)`. To verify: whether the camera center uses `Geographic(lng,lat)` (expected) or `Position`; that sources/layers (`GeoJsonSource`, `SymbolStyleLayer` with icon image + icon-rotate) are added via the `StyleController` from `onStyleLoaded` and the exact method names (`addSource`/`addLayer`/`addImage` vs alternatives); and the icon-rotate expression syntax.
 
 - [ ] **Step 1: Confirm the installed maplibre API**
 
@@ -1220,8 +1220,9 @@ class _MapScreenState extends State<MapScreen> {
                 pitch: _tilted ? 50 : 0,
                 bearing: 0,
               ),
-              // In 0.4.0 the style is provided via options/onStyleLoaded; set
-              // the style URL per the API confirmed in Step 1.
+              // In 0.3.5 the style is provided via MapOptions / setStyle and a
+              // StyleController arrives in onStyleLoaded; set the style URL per
+              // the API confirmed in Step 1.
               onMapCreated: (c) => _controller = c,
               onStyleLoaded: () {},
             )
@@ -1677,4 +1678,4 @@ git commit -m "docs: add run/test instructions and verify offline acceptance"
 
 **Type consistency:** `UserLocation` fields (`lat/lng/headingDeg/speedMps/accuracyM/timestamp`) are consistent across Tasks 8, 11, 13. `LocationPermissionState` enum consistent across Tasks 8, 12. `TileService.ensureReady()` → `MapReady{styleUrl, server}` consistent across Tasks 7, 10, 13. `UserPointer` ids (`sourceId/layerId/iconId`) consistent across Task 11. `LocalTileServer{reader,glyphsDir,styleJson}` constructor consistent across Tasks 6, 7.
 
-**Known integration risks to watch during execution** (flagged inline, not blockers): exact `maplibre` 0.4.0 controller/source/layer/camera method names; how 0.4.0 accepts the style URL (constructor vs options); protomaps glyph font-stack folder name; correct z/x/y tile id for the integration assertion; `Position.timestamp` nullability.
+**Known integration risks to watch during execution** (flagged inline, not blockers): exact `maplibre` 0.3.5 source/layer/`StyleController` method names for adding the pointer (camera/controller API is confirmed); how 0.3.5 accepts the style URL (`MapOptions` vs `setStyle`); whether `tile.bytes()` already decompresses gzip; protomaps glyph font-stack folder name; correct z/x/y tile id for the integration assertion.
