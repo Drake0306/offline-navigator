@@ -33,6 +33,9 @@ class LocationService {
   }
 
   Future<void> start() async {
+    // Cancel any prior subscription so calling start() twice (e.g. after a
+    // permission re-grant) doesn't orphan a stream that keeps emitting.
+    await stop();
     const settings = LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       distanceFilter: 0,
