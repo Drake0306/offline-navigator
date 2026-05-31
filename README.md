@@ -1,6 +1,8 @@
 # Offline Navigator
 
-An offline-first Flutter navigation app (Android + iOS + macOS desktop). **Milestone 1** delivers a fully offline MapLibre vector map of Ghatshila, Jharkhand — including a live GPS directional arrow pointer that rotates to your heading, 2.5D camera tilt, a follow-camera mode, and a permission banner. The bundled tile pack, glyph fonts, and style are copied to on-device storage on first launch so the map works completely in airplane mode afterwards.
+An offline-first Flutter navigation app for **Android and iOS**. **Milestone 1** delivers a fully offline MapLibre vector map of Ghatshila, Jharkhand — including a live GPS directional arrow pointer that rotates to your heading, 2.5D camera tilt, a follow-camera mode, and a permission banner. The bundled tile pack, glyph fonts, and style are copied to on-device storage on first launch so the map works completely in airplane mode afterwards.
+
+> A macOS desktop target is also scaffolded — purely so the offline integration test can be run without a mobile device once full Xcode is installed (see Verification status). macOS is not a shipping target.
 
 ---
 
@@ -54,7 +56,7 @@ flutter test integration_test/offline_smoke_test.dart -d <device-id>
 
 The integration test proves the offline path end-to-end: it calls `TileService.ensureReady()`, verifies `style.json` is served from `127.0.0.1`, and confirms the tile server responds — all without any external network access.
 
-> **macOS note:** the integration test also runs on macOS desktop (no mobile device needed). The `com.apple.security.network.server` entitlement required for the local HTTP server is already committed in `macos/Runner/DebugProfile.entitlements` and `Release.entitlements`.
+> **macOS note:** the integration test is also runnable on macOS desktop (no mobile device needed) — useful for verifying the offline path on a dev machine. This requires **full Xcode** (not just the Command Line Tools). The `com.apple.security.network.server`/`client` entitlements the local HTTP server needs are already committed in `macos/Runner/DebugProfile.entitlements` and `Release.entitlements`.
 
 ---
 
@@ -92,9 +94,9 @@ Full design rationale and architecture decisions:
 | What | Status |
 |---|---|
 | `flutter analyze` — whole project | **PASS** — "No issues found!" |
-| `flutter test` — 18 unit + widget tests | **PASS** — all 18 passed |
-| Offline smoke test (`integration_test/offline_smoke_test.dart`) on macOS | **PASS** — tile server starts, `style.json` + tiles served from `127.0.0.1` with no network |
+| `flutter test` — 19 unit + widget tests | **PASS** — all 19 passed |
+| Offline smoke test (`integration_test/offline_smoke_test.dart`) | **WRITTEN, NOT YET RUN** — code complete and `flutter analyze`-clean, but never executed: the dev environment has no mobile device/emulator, and the macOS target needs full Xcode (only the Command Line Tools are installed here). Run it with `-d <device>` to confirm the offline path. |
 | On-device **mobile** visual rendering (Android / iOS) | **NOT YET VERIFIED** — no mobile device was available in the dev environment |
-| Live GPS arrow pointer + follow camera on mobile | **NOT YET VERIFIED** — requires manual acceptance steps above on a real/emulated device |
+| Live GPS arrow pointer + follow camera on mobile | **NOT YET VERIFIED** — requires the manual acceptance steps above on a real/emulated device |
 
-The core offline infrastructure (tile pack, local HTTP server, asset copy, EMA smoothing) is covered by automated tests. The on-device visual and GPS experience has not been checked; the manual checklist above is the next verification step.
+The core offline infrastructure (PMTiles reader, local HTTP tile/glyph/style server, asset-copy + version stamp, EMA location smoothing, GeoJSON pointer encoding) is covered by automated unit/widget tests. The end-to-end offline-serving path has an integration test written but not yet executed, and the on-device visual + live-GPS experience has not been checked — the integration test and the manual checklist above are the next verification steps.
