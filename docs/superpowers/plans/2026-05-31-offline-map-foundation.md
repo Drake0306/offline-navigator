@@ -6,7 +6,14 @@
 
 **Architecture:** A thin Flutter UI (`MapScreen`) over three focused modules: `TileService` (copies a bundled PMTiles pack into app storage and serves it via an in-app `shelf` HTTP server on `127.0.0.1`), `LocationService` (geolocator position + heading stream with light smoothing), and the `maplibre` plugin for native vector rendering. Offline map data is a single `.pmtiles` file plus a minimal MapLibre style and bundled glyph fonts.
 
-**Tech Stack:** Flutter ≥3.35 / Dart ≥3.9, `maplibre` ^0.4.0, `geolocator` ^14.0.2, `pmtiles` ^2.0.0, `shelf` ^1.4.0 + `shelf_router`, `path_provider` ^2.1.5; `pmtiles` CLI (Go) for dev-time tile extraction; Protomaps daily basemap build as the tile source.
+**Tech Stack:** Flutter ≥3.35 / Dart ≥3.9, `maplibre` ^0.3.5 (latest; needs Dart ≥3.9 — fallback `0.2.1` if staying on Dart 3.7), `geolocator` ^14.0.2, `pmtiles` ^2.0.0, `shelf` ^1.4.0 + `shelf_router`, `path_provider` ^2.1.5; `pmtiles` CLI (Go) for dev-time tile extraction; Protomaps daily basemap build as the tile source.
+
+> **Verified API facts (from pub.dev at plan time — use these; the per-task "confirm" steps remain as a safety net):**
+> - **`maplibre` latest is `0.3.5`, not `0.4.0`.** `0.3.x` requires **Dart ≥3.9** (hence the Flutter upgrade in Task 0). If the toolchain can't be upgraded, pin `maplibre: 0.2.1` (last Dart-3.7-compatible release) and expect minor API drift.
+> - **`maplibre` types:** widget `MapLibreMap`; `MapOptions`; controller `MapController` with `animateCamera({Geographic? center, double? zoom, double? bearing, double? pitch, Duration nativeDuration})`, `moveCamera({...})`, `getCamera() → MapCamera`, `setStyle(String)`, and built-in `enableLocation()` / `trackLocation({BearingTrackMode trackBearing})`. The map style is set via `MapOptions` and a `StyleController` is delivered by `onStyleLoaded`. **Sources/layers are added through the `StyleController`** (e.g. `GeoJsonSource`, `VectorSource`, `RasterSource`; `SymbolStyleLayer`, `CircleStyleLayer`, `LineStyleLayer`, `FillStyleLayer`, `RasterStyleLayer`). Camera coordinates use the `Geographic` type (lng, lat). Wherever the reference code below says `Position(lng,lat)`, use `Geographic(lng,lat)`; wherever it calls `_controller.addSource/addLayer/addImage`, route those through the `StyleController` from `onStyleLoaded`.
+> - **`maplibre` has a built-in location component** (`enableLocation`/`trackLocation`). Task 11 first tries a custom rotatable symbol for full pointer-icon control; if the symbol/expression path is awkward in 0.3.5, fall back to the built-in location component for v1 and revisit the custom icon when we add vehicle icons (Milestone 4).
+> - **`pmtiles` open call is `PmTilesArchive.from(String path)`** (not `.fromFile(File)`). Tile read: `await archive.tile(ZXY(z,x,y).toTileId())` → `tile.bytes()`. Compression via `archive.tileCompression`; min/max zoom + bounds live in `await archive.metadata` (JSON), not guaranteed as header getters.
+> - **`geolocator` 14.0.2** matches the plan as written (`Position.timestamp` is non-nullable `DateTime`).
 
 ---
 
@@ -126,7 +133,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  maplibre: ^0.4.0
+  maplibre: ^0.3.5   # latest; needs Dart >=3.9. If staying on Dart 3.7, pin 0.2.1.
   geolocator: ^14.0.2
   pmtiles: ^2.0.0
   shelf: ^1.4.1
@@ -154,7 +161,7 @@ flutter:
 - [ ] **Step 4: Resolve dependencies**
 
 Run: `flutter pub get`
-Expected: resolves without version conflicts. If `maplibre ^0.4.0` fails to resolve, re-check Task 0 Step 2 (Flutter must be ≥3.35).
+Expected: resolves without version conflicts. If `maplibre ^0.3.5` fails to resolve, re-check Task 0 Step 2 (Flutter must be ≥3.35 so Dart ≥3.9). If the toolchain can't be upgraded, change the constraint to `maplibre: 0.2.1` and proceed (expect minor API drift from the reference code).
 
 - [ ] **Step 5: Commit**
 
@@ -420,7 +427,7 @@ git commit -m "feat: add AppPaths with asset version stamping (tested)"
 - Create: `lib/tiles/pmtiles_reader.dart`
 - Test: `test/tiles/pmtiles_reader_test.dart`
 
-Confirmed `pmtiles` 2.0.0 API: `PmTilesArchive.fromFile(File)`, `ZXY(z,x,y).toTileId()`, `archive.tile(tileId)`, `tile.bytes()`, `archive.close()`. Tiles may be gzip-compressed per the archive header; vector MVT served to MapLibre should be the decompressed pbf, so decompress when the header says gzip.
+Confirmed `pmtiles` 2.0.0 API: `PmTilesArchive.from(String path)`, `ZXY(z,x,y).toTileId()`, `archive.tile(tileId)`, `tile.bytes()`, `archive.close()`, `archive.tileCompression`, `await archive.metadata` (JSON with min/max zoom + bounds). Tiles may be gzip-compressed per `tileCompression`; vector MVT served to MapLibre should be the decompressed pbf, so decompress when compression is gzip (verify whether `tile.bytes()` already decompresses).
 
 - [ ] **Step 1: Write the failing test (uses the real bundled pack as fixture)**
 
@@ -502,11 +509,11 @@ class PmTilesReader {
   final int maxZoom;
 
   static Future<PmTilesReader> open(String path) async {
-    final archive = await PmTilesArchive.fromFile(File(path));
-    // Header exposes min/max zoom; fall back to a sane range if unavailable.
-    final header = archive.header;
-    final minZ = header.minZoom;
-    final maxZ = header.maxZoom;
+    final archive = await PmTilesArchive.from(path);
+    // min/max zoom live in the embedded metadata JSON (per pmtiles 2.0.0).
+    final meta = await archive.metadata;
+    final minZ = (meta['minzoom'] as num?)?.toInt() ?? 0;
+    final maxZ = (meta['maxzoom'] as num?)?.toInt() ?? 15;
     return PmTilesReader._(archive, minZ, maxZ);
   }
 
@@ -526,7 +533,7 @@ class PmTilesReader {
 }
 ```
 
-> **Confirm note:** `header.minZoom`/`maxZoom` and `tile.bytes()` decompression behavior are per the `pmtiles` 2.0.0 docs. If the installed API differs (e.g. `archive.header` is async or property names vary), run `cat $(find ~/.pub-cache -path '*pmtiles*/lib/pmtiles.dart' | head -1)` to read the real API and adjust these three lines.
+> **Confirm note:** `archive.metadata` keys (`minzoom`/`maxzoom`) and whether `tile.bytes()` already decompresses gzip are per the `pmtiles` 2.0.0 docs. If the installed API differs, run `cat $(find ~/.pub-cache -path '*pmtiles*/lib/pmtiles.dart' | head -1)` to read the real API and adjust `open()`/`readTile()`. The `dart:io` import is only needed if you switch back to a `File`-based open.
 
 - [ ] **Step 4: Run the test to confirm it passes**
 
