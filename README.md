@@ -70,7 +70,7 @@ These steps exercise the full on-device experience that cannot be covered by aut
 4. Pan, zoom, and rotate — confirm smooth interaction.
 5. Press the **3D button** (bottom-right) — confirm the camera tilts to ~50°.
 6. Walk or use mock GPS near 22.586° N, 86.476° E — confirm the orange arrow pointer appears, rotates to heading, and the camera follows.
-7. Manually pan the map — confirm follow mode disables and the **recenter button** re-enables it.
+7. Manually pan away from your location, then press the **recenter button** (bottom-right) — confirm the camera animates back to your position and resumes following. (v1 keeps follow on until you recenter; it does not auto-disable on a manual pan.)
 
 ---
 
