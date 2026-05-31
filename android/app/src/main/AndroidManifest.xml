@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Needed for the in-app loopback (127.0.0.1) tile server: Android requires
+         INTERNET for any socket use, even local. Flutter only auto-adds this to
+         the debug/profile manifests, so release builds need it declared here or
+         the offline map would be blank. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
