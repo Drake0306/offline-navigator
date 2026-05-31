@@ -27,6 +27,8 @@ class _MapScreenState extends State<MapScreen> {
   StreamSubscription<UserLocation>? _locSub;
   String? _styleUrl;
   bool _tilted = false;
+  // v1: follow stays on until recenter is re-tapped; maplibre 0.3.5 has no
+  // reliable user-gesture signal to auto-disable follow on manual pan.
   bool _follow = true;
 
   // Stored if location permission is not granted (used in Task 12 banner).
@@ -122,14 +124,6 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  void _onMapEvent(MapEvent event) {
-    // Disable follow-mode when the user manually drags the map.
-    if (event is MapEventStartMoveCamera &&
-        event.reason == CameraChangeReason.apiGesture) {
-      if (_follow) setState(() => _follow = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -151,7 +145,6 @@ class _MapScreenState extends State<MapScreen> {
                 _style = style;
                 _setupPointer(style);
               },
-              onEvent: _onMapEvent,
             )
           else
             const Center(child: CircularProgressIndicator()),
