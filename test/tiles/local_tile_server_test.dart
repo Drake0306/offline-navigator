@@ -50,6 +50,19 @@ void main() {
     final res = await _get('${server.baseUrl}/tiles/abc/x/y.mvt');
     expect(res.statusCode, 404);
   });
+
+  test('updateStyle serves the new JSON without a restart', () async {
+    final before = await _get('${server.baseUrl}/style.json');
+    expect(before.body, contains('"version":8'));
+
+    server.updateStyle('{"version":8,"name":"updated"}');
+
+    final after = await _get('${server.baseUrl}/style.json');
+    expect(after.statusCode, 200);
+    expect(after.body, contains('"name":"updated"'));
+    // The old value is gone.
+    expect(after.body, isNot(contains('"name":"t"')));
+  });
 }
 
 Future<_Resp> _get(String url) async {

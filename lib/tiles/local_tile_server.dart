@@ -12,12 +12,16 @@ class LocalTileServer {
   LocalTileServer({
     required this.reader,
     required this.glyphsDir,
-    required this.styleJson,
-  });
+    required String styleJson,
+  }) : _styleJson = styleJson;
 
   final PmTilesReader reader;
   final String glyphsDir;
-  final String styleJson;
+  String _styleJson;
+
+  /// Replaces the style JSON served at `/style.json` without restarting the
+  /// server. Call after [start] once you know the server's [baseUrl].
+  void updateStyle(String json) => _styleJson = json;
 
   HttpServer? _server;
 
@@ -35,7 +39,7 @@ class LocalTileServer {
     // --- /style.json ---
     router.get('/style.json', (Request req) {
       return Response.ok(
-        styleJson,
+        _styleJson,
         headers: {'content-type': 'application/json'},
       );
     });
