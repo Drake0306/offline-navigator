@@ -51,6 +51,13 @@
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Offline Navigator uses your location to show your position and follow you on the map.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- The offline map is served from an in-process HTTP server on
+		     127.0.0.1; allow cleartext to the local loopback only. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

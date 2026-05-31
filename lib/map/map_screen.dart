@@ -29,7 +29,13 @@ class _MapScreenState extends State<MapScreen> {
   String? _styleUrl;
   String? _bootError;
   UserLocation? _lastLoc;
+  bool _pointerReady = false;
   bool _tilted = false;
+
+  /// How long the follow-camera takes to glide to each new GPS fix. Short
+  /// enough to keep up with ~1 fix/sec without the 2s default piling up and
+  /// making the map float; long enough to stay smooth alongside EMA smoothing.
+  static const _followDuration = Duration(milliseconds: 700);
   // v1: follow stays on until recenter is re-tapped; maplibre 0.3.5 has no
   // reliable user-gesture signal to auto-disable follow on manual pan.
   bool _follow = true;
@@ -92,42 +98,61 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _setupPointer(StyleController style) async {
-    // 1. Register the arrow PNG as a named style image.
-    final data = await rootBundle.load('assets/icons/pointer_arrow.png');
-    await style.addImage(UserPointer.iconId, data.buffer.asUint8List());
+    // onStyleLoaded can fire more than once (e.g. a style reload). Adding the
+    // same image/source/layer twice throws on duplicate ids, so guard it.
+    if (_pointerReady) return;
+    _pointerReady = true;
+    try {
+      // 1. Register the arrow PNG as a named style image.
+      final data = await rootBundle.load('assets/icons/pointer_arrow.png');
+      await style.addImage(UserPointer.iconId, data.buffer.asUint8List());
 
-    // 2. Add an empty GeoJSON source.
-    await style.addSource(
-      GeoJsonSource(
-        id: UserPointer.sourceId,
-        data: UserPointer.emptyJson(),
-      ),
-    );
+      // 2. Add an empty GeoJSON source.
+      await style.addSource(
+        GeoJsonSource(
+          id: UserPointer.sourceId,
+          data: UserPointer.emptyJson(),
+        ),
+      );
 
-    // 3. Add a symbol layer using the icon, rotated by the feature `heading`
-    //    property. icon-rotation-alignment: 'map' ensures the arrow rotates
-    //    relative to the map's north, not the screen.
-    await style.addLayer(
-      SymbolStyleLayer(
-        id: UserPointer.layerId,
-        sourceId: UserPointer.sourceId,
-        layout: {
-          'icon-image': UserPointer.iconId,
-          'icon-rotate': ['get', 'heading'],
-          'icon-rotation-alignment': 'map',
-          'icon-allow-overlap': true,
-        },
-      ),
-    );
+      // 3. Add a symbol layer using the icon, rotated by the feature `heading`
+      //    property. icon-rotation-alignment: 'map' ensures the arrow rotates
+      //    relative to the map's north, not the screen. icon-size scales the
+      //    96px source PNG to a sensible on-screen size.
+      await style.addLayer(
+        SymbolStyleLayer(
+          id: UserPointer.layerId,
+          sourceId: UserPointer.sourceId,
+          layout: {
+            'icon-image': UserPointer.iconId,
+            'icon-rotate': ['get', 'heading'],
+            'icon-rotation-alignment': 'map',
+            'icon-allow-overlap': true,
+            'icon-size': 0.5,
+          },
+        ),
+      );
+    } catch (e) {
+      // Pointer layer setup failed (e.g. duplicate ids on a style reload).
+      // Allow a later attempt and keep the basemap usable rather than crashing.
+      _pointerReady = false;
+      debugPrint('Pointer setup failed: $e');
+      return;
+    }
 
     // 4. Request permission and start the location stream.
-    final permState = await _location.ensurePermission();
-    if (permState == LocationPermissionState.granted) {
-      await _location.start();
-      _locSub = _location.positions.listen(_onLocation);
-    } else {
-      // Store for Task 12's permission banner; no UI built here.
-      if (mounted) setState(() => _permIssue = permState);
+    try {
+      final permState = await _location.ensurePermission();
+      if (permState == LocationPermissionState.granted) {
+        await _location.start();
+        await _locSub?.cancel();
+        _locSub = _location.positions.listen(_onLocation);
+      } else {
+        // Drives the permission banner.
+        if (mounted) setState(() => _permIssue = permState);
+      }
+    } catch (e) {
+      debugPrint('Location startup failed: $e');
     }
   }
 
@@ -143,6 +168,7 @@ class _MapScreenState extends State<MapScreen> {
     if (_follow) {
       _controller?.animateCamera(
         center: Geographic(lon: loc.lng, lat: loc.lat),
+        nativeDuration: _followDuration,
       );
     }
   }
@@ -229,7 +255,7 @@ class _MapScreenState extends State<MapScreen> {
               },
               onStyleLoaded: (StyleController style) {
                 _style = style;
-                _setupPointer(style);
+                unawaited(_setupPointer(style));
               },
             )
           else if (_bootError != null)
@@ -238,6 +264,9 @@ class _MapScreenState extends State<MapScreen> {
             const Center(child: CircularProgressIndicator()),
           // Permission banner — overlays the map but does not block pan/zoom.
           if (_permBanner() != null) _permBanner()!,
+          // OSM/ODbL attribution — required when displaying OpenStreetMap data.
+          if (_styleUrl != null)
+            const Positioned(left: 8, bottom: 6, child: _Attribution()),
           // Control buttons render regardless of map state so tests can find them.
           Positioned(
             right: 16,
@@ -262,6 +291,26 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Map data attribution required by OpenStreetMap's ODbL license.
+class _Attribution extends StatelessWidget {
+  const _Attribution();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: const Text(
+        '© OpenStreetMap',
+        style: TextStyle(fontSize: 10, color: Color(0xFF3B3B3B)),
       ),
     );
   }
