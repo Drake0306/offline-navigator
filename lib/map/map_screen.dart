@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:maplibre/maplibre.dart';
 import 'package:offline_navigator/location/location_service.dart';
 import 'package:offline_navigator/location/user_location.dart';
@@ -31,8 +32,7 @@ class _MapScreenState extends State<MapScreen> {
   // reliable user-gesture signal to auto-disable follow on manual pan.
   bool _follow = true;
 
-  // Stored if location permission is not granted (used in Task 12 banner).
-  // ignore: unused_field
+  // Stored if location permission is not granted; drives the permission banner.
   LocationPermissionState? _permIssue;
 
   // Ghatshila center — Geographic uses named params (lon, lat).
@@ -124,6 +124,64 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  Widget? _permBanner() {
+    final issue = _permIssue;
+    if (issue == null) return null;
+    final (msg, action) = switch (issue) {
+      LocationPermissionState.serviceOff => (
+        'Location services are off.',
+        'Open settings',
+      ),
+      LocationPermissionState.deniedForever => (
+        'Location permission is blocked.',
+        'Open settings',
+      ),
+      _ => (
+        'Location permission needed to show your position.',
+        'Grant',
+      ),
+    };
+    return Positioned(
+      left: 12,
+      right: 12,
+      top: 48,
+      child: Material(
+        color: const Color(0xFFFDF1DC),
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(child: Text(msg)),
+              TextButton(
+                key: const Key('permActionButton'),
+                onPressed: () async {
+                  if (action == 'Open settings') {
+                    await Geolocator.openAppSettings();
+                  } else {
+                    final s = await _location.ensurePermission();
+                    if (!mounted) return;
+                    if (s == LocationPermissionState.granted) {
+                      setState(() => _permIssue = null);
+                      await _location.start();
+                      _locSub = _location.positions.listen(_onLocation);
+                    }
+                  }
+                },
+                child: Text(action),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Exposed for widget tests only — sets _permIssue and triggers a rebuild.
+  @visibleForTesting
+  void showPermissionIssueForTest(LocationPermissionState s) =>
+      setState(() => _permIssue = s);
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -148,6 +206,8 @@ class _MapScreenState extends State<MapScreen> {
             )
           else
             const Center(child: CircularProgressIndicator()),
+          // Permission banner — overlays the map but does not block pan/zoom.
+          if (_permBanner() != null) _permBanner()!,
           // Control buttons render regardless of map state so tests can find them.
           Positioned(
             right: 16,
