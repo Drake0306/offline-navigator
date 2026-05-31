@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Offline-First Navigation App — Architecture &amp; Tech-Stack Research</title>
+<meta name="description" content="Research and recommended architecture for a highly accurate, offline-first Android + iOS navigation app: MapLibre + OSM/PMTiles + Valhalla, with a cross-platform UI over a native map/routing core." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /* ------------------------------------------------------------------ *
+   *  Design tokens
+   * ------------------------------------------------------------------ */
+  :root{
+    --font-display:'Bricolage Grotesque','IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
+    --font-body:'IBM Plex Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+
+    --ink:#0b1020;
+    --ink-2:#141b2e;
+    --paper:#ffffff;
+    --paper-2:#f5f7fb;
+    --paper-3:#eef1f7;
+    --line:#e0e5ef;
+    --line-2:#cdd5e3;
+
+    --text:#1a2233;
+    --muted:#586075;
+    --faint:#8a93a6;
+
+    --route:#ff6a1a;          /* primary accent — the "route line" */
+    --route-deep:#e8550a;
+    --route-soft:#fff0e6;
+    --gps:#2f6bff;            /* locator blue */
+    --gps-soft:#e9f0ff;
+    --teal:#0fae9e;
+    --teal-soft:#e0f6f3;
+
+    --ok:#15924b;            --ok-soft:#e6f5ec;
+    --warn:#b06a00;          --warn-soft:#fdf1dc;
+    --risk:#cc2f2f;          --risk-soft:#fdebeb;
+    --mine:#6b46e0;          --mine-soft:#f0ebfd;
+
+    --radius:14px;
+    --radius-sm:9px;
+    --shadow:0 1px 2px rgba(16,24,40,.05),0 8px 28px -12px rgba(16,24,40,.18);
+    --shadow-lg:0 24px 60px -28px rgba(11,16,32,.55);
+    --maxw:1180px;
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth;scroll-padding-top:84px;-webkit-text-size-adjust:100%}
+  body{
+    margin:0;background:var(--paper);color:var(--text);
+    font-family:var(--font-body);font-size:16.5px;line-height:1.68;
+    font-weight:400;letter-spacing:.002em;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  }
+  a{color:var(--route-deep);text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3,h4{font-family:var(--font-display);color:var(--ink);line-height:1.15;letter-spacing:-.015em;font-weight:700}
+  code,kbd,.mono{font-family:var(--font-mono);font-size:.84em}
+  p code,li code,td code{background:var(--paper-3);border:1px solid var(--line);padding:.06em .42em;border-radius:6px;color:#2a3346;white-space:nowrap}
+
+  /* ------------------------------------------------------------------ *
+   *  Top nav bar
+   * ------------------------------------------------------------------ */
+  .topbar{
+    position:sticky;top:0;z-index:50;
+    background:rgba(255,255,255,.82);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line);
+  }
+  .topbar__inner{max-width:var(--maxw);margin:0 auto;padding:11px 26px;display:flex;align-items:center;gap:14px}
+  .brand{display:flex;align-items:center;gap:11px;font-family:var(--font-display);font-weight:700;color:var(--ink);font-size:15.5px;letter-spacing:-.01em}
+  .brand .mark{width:30px;height:30px;flex:none}
+  .topbar__meta{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .pill{
+    font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.02em;
+    padding:4px 10px;border-radius:999px;border:1px solid var(--line-2);color:var(--muted);background:var(--paper-2);
+    white-space:nowrap;
+  }
+  @media(max-width:760px){.topbar__meta{display:none}}
+
+  /* ------------------------------------------------------------------ *
+   *  Hero
+   * ------------------------------------------------------------------ */
+  .hero{position:relative;overflow:hidden;background:radial-gradient(120% 140% at 80% -10%,#1c2747 0%,#0b1020 58%,#080c18 100%);color:#dfe6f5}
+  .hero__bg{position:absolute;inset:0;opacity:.5;pointer-events:none}
+  .hero__inner{position:relative;max-width:var(--maxw);margin:0 auto;padding:78px 26px 86px}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:9px;
+    font-family:var(--font-mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+    color:#ffb487;background:rgba(255,106,26,.12);border:1px solid rgba(255,106,26,.32);
+    padding:6px 13px;border-radius:999px;margin-bottom:24px;
+  }
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--route);box-shadow:0 0 0 4px rgba(255,106,26,.22)}
+  .hero h1{font-size:clamp(2.2rem,4.8vw,3.7rem);color:#fff;margin:0 0 18px;max-width:17ch;font-weight:800;letter-spacing:-.03em}
+  .hero h1 .accent{color:var(--route)}
+  .hero__sub{font-size:clamp(1.02rem,1.7vw,1.24rem);color:#aeb9d4;max-width:62ch;margin:0 0 34px;font-weight:400}
+  .hero__chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{
+    display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:500;
+    padding:8px 14px;border-radius:10px;color:#cdd6ec;background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(4px);
+  }
+  .chip svg{width:15px;height:15px;flex:none;color:var(--route)}
+  .hero__stats{display:flex;gap:30px;flex-wrap:wrap;margin-top:42px;padding-top:30px;border-top:1px solid rgba(255,255,255,.1)}
+  .stat .n{font-family:var(--font-display);font-size:1.95rem;font-weight:800;color:#fff;line-height:1;letter-spacing:-.02em}
+  .stat .l{font-size:12.5px;color:#8e99b8;margin-top:6px;letter-spacing:.02em}
+
+  /* ------------------------------------------------------------------ *
+   *  Layout: TOC + main
+   * ------------------------------------------------------------------ */
+  .layout{max-width:var(--maxw);margin:0 auto;padding:0 26px;display:grid;grid-template-columns:240px minmax(0,1fr);gap:52px;align-items:start}
+  .toc{position:sticky;top:74px;padding:38px 0;max-height:calc(100vh - 74px);overflow-y:auto}
+  .toc__title{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin:0 0 14px}
+  .toc ol{list-style:none;margin:0;padding:0;counter-reset:toc}
+  .toc li{counter-increment:toc;margin:1px 0}
+  .toc a{
+    display:flex;gap:10px;align-items:baseline;
+    font-size:13.5px;color:var(--muted);padding:6px 10px;border-radius:8px;border-left:2px solid transparent;
+    line-height:1.35;
+  }
+  .toc a::before{content:counter(toc,decimal-leading-zero);font-family:var(--font-mono);font-size:10.5px;color:var(--faint);flex:none}
+  .toc a:hover{background:var(--paper-2);color:var(--text);text-decoration:none}
+  .toc a.active{color:var(--route-deep);background:var(--route-soft);border-left-color:var(--route);font-weight:600}
+  .toc a.active::before{color:var(--route-deep)}
+  main{padding:44px 0 90px;min-width:0}
+
+  @media(max-width:900px){
+    .layout{grid-template-columns:1fr;gap:0}
+    .toc{display:none}
+    main{padding-top:30px}
+  }
+
+  /* ------------------------------------------------------------------ *
+   *  Sections & typography
+   * ------------------------------------------------------------------ */
+  section{margin-bottom:64px;scroll-margin-top:84px}
+  .sec-head{display:flex;align-items:center;gap:14px;margin:0 0 8px}
+  .sec-num{
+    font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--route-deep);
+    background:var(--route-soft);border:1px solid #ffd7bf;padding:5px 9px;border-radius:8px;flex:none;
+  }
+  section h2{font-size:clamp(1.55rem,2.7vw,2.05rem);margin:0;letter-spacing:-.02em}
+  .sec-sub{color:var(--muted);font-size:1.04rem;margin:6px 0 26px;max-width:74ch}
+  section h3{font-size:1.24rem;margin:34px 0 10px}
+  section h4{font-size:1.03rem;margin:22px 0 8px;color:var(--ink-2);font-weight:600}
+  p{margin:0 0 15px}
+  ul,ol{margin:0 0 16px;padding-left:1.25em}
+  li{margin:6px 0}
+  .lead{font-size:1.12rem;color:#33405a}
+  hr.soft{border:none;border-top:1px solid var(--line);margin:36px 0}
+
+  /* ------------------------------------------------------------------ *
+   *  Badges
+   * ------------------------------------------------------------------ */
+  .badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:6px;white-space:nowrap;vertical-align:middle}
+  .badge::before{content:"";width:6px;height:6px;border-radius:50%}
+  .b-high{background:var(--ok-soft);color:var(--ok)} .b-high::before{background:var(--ok)}
+  .b-med{background:var(--warn-soft);color:var(--warn)} .b-med::before{background:var(--warn)}
+  .b-risk{background:var(--risk-soft);color:var(--risk)} .b-risk::before{background:var(--risk)}
+  .b-mine{background:var(--mine-soft);color:var(--mine)} .b-mine::before{background:var(--mine)}
+  .b-open{background:var(--gps-soft);color:#1d52d8} .b-open::before{background:var(--gps)}
+  .b-free{background:var(--teal-soft);color:#0a857a} .b-free::before{background:var(--teal)}
+  .b-paid{background:#eef1f7;color:#475066} .b-paid::before{background:#7c879c}
+
+  /* ------------------------------------------------------------------ *
+   *  Cards / callouts
+   * ------------------------------------------------------------------ */
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:24px 26px;box-shadow:var(--shadow)}
+  .callout{border:1px solid var(--line);border-left-width:4px;border-radius:var(--radius);padding:18px 22px;margin:22px 0;background:var(--paper-2)}
+  .callout p:last-child{margin-bottom:0}
+  .callout .k{font-family:var(--font-display);font-weight:700;font-size:.98rem;display:flex;align-items:center;gap:9px;margin-bottom:7px;letter-spacing:-.01em}
+  .callout.tip{border-left-color:var(--teal);background:var(--teal-soft)}
+  .callout.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+  .callout.risk{border-left-color:var(--risk);background:var(--risk-soft)}
+  .callout.mine{border-left-color:var(--mine);background:var(--mine-soft)}
+  .callout .k svg{width:17px;height:17px}
+
+  /* The big recommendation block */
+  .verdict{
+    background:linear-gradient(150deg,#101831 0%,#0b1020 100%);color:#e7ecf8;
+    border-radius:20px;padding:34px 34px 30px;box-shadow:var(--shadow-lg);position:relative;overflow:hidden;
+    border:1px solid rgba(255,255,255,.08);
+  }
+  .verdict::after{content:"";position:absolute;right:-60px;top:-60px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(255,106,26,.22),transparent 65%)}
+  .verdict h3{color:#fff;font-size:1.22rem;margin:0 0 4px;position:relative;letter-spacing:-.02em}
+  .verdict .tag{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#ffb487;margin-bottom:16px;display:block}
+  .verdict p{color:#b9c3dc;position:relative}
+  .verdict strong{color:#fff;font-weight:600}
+
+  /* Stack diagram in verdict */
+  .stack{display:grid;gap:9px;margin:18px 0 4px;position:relative}
+  .stack__row{display:grid;grid-template-columns:130px 1fr auto;gap:14px;align-items:center;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);border-radius:11px;padding:12px 15px}
+  .stack__row .lyr{font-family:var(--font-mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#8b98ba}
+  .stack__row .pick{font-family:var(--font-display);font-weight:700;color:#fff;font-size:1rem;letter-spacing:-.01em}
+  .stack__row .pick small{display:block;font-family:var(--font-body);font-weight:400;color:#9aa6c5;font-size:12.5px;letter-spacing:0;text-transform:none;margin-top:2px}
+  @media(max-width:560px){.stack__row{grid-template-columns:1fr;gap:4px}.stack__row .badge{justify-self:start}}
+
+  /* ------------------------------------------------------------------ *
+   *  Tables
+   * ------------------------------------------------------------------ */
+  .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin:18px 0 8px;-webkit-overflow-scrolling:touch}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:14.5px}
+  thead th{
+    background:var(--ink);color:#e7ecf8;font-family:var(--font-display);font-weight:600;font-size:12.5px;
+    letter-spacing:.02em;text-align:left;padding:13px 16px;position:sticky;top:0;white-space:nowrap;
+  }
+  tbody td{padding:13px 16px;border-top:1px solid var(--line);vertical-align:top}
+  tbody tr:nth-child(even){background:var(--paper-2)}
+  tbody tr:hover{background:var(--route-soft)}
+  tbody td:first-child{font-weight:600;color:var(--ink);white-space:nowrap}
+  .row-pick td{background:linear-gradient(90deg,var(--route-soft),transparent 60%)!important;box-shadow:inset 3px 0 0 var(--route)}
+  td .yes{color:var(--ok);font-weight:600}
+  td .no{color:var(--faint)}
+  td .meh{color:var(--warn);font-weight:600}
+  caption{caption-side:bottom;text-align:left;color:var(--faint);font-size:12.5px;padding:10px 4px 0;font-style:italic}
+
+  /* ------------------------------------------------------------------ *
+   *  Feature grid
+   * ------------------------------------------------------------------ */
+  .grid{display:grid;gap:16px}
+  .grid.cols-2{grid-template-columns:repeat(2,1fr)}
+  .grid.cols-3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:780px){.grid.cols-2,.grid.cols-3{grid-template-columns:1fr}}
+  .feature{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px;transition:transform .16s ease,box-shadow .16s ease}
+  .feature:hover{transform:translateY(-3px);box-shadow:var(--shadow)}
+  .feature .ic{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--route-soft);color:var(--route-deep);margin-bottom:13px}
+  .feature .ic svg{width:21px;height:21px}
+  .feature h4{margin:0 0 6px}
+  .feature p{font-size:14px;color:var(--muted);margin:0}
+
+  /* ------------------------------------------------------------------ *
+   *  Architecture diagram
+   * ------------------------------------------------------------------ */
+  .arch{background:var(--paper-2);border:1px solid var(--line);border-radius:18px;padding:26px;margin:22px 0}
+  .arch__layers{display:grid;gap:13px}
+  .alayer{border-radius:12px;padding:15px 18px;border:1px solid var(--line);background:var(--paper);position:relative}
+  .alayer .tag{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:9px}
+  .alayer__row{display:flex;flex-wrap:wrap;gap:9px}
+  .node{display:inline-flex;align-items:center;gap:8px;background:var(--paper-2);border:1px solid var(--line-2);border-radius:9px;padding:8px 12px;font-size:13.5px;font-weight:500}
+  .node b{font-weight:600;color:var(--ink)}
+  .node .d{width:8px;height:8px;border-radius:2px}
+  .l-ui{border-top:3px solid var(--gps)} .l-ui .tag{color:var(--gps)}
+  .l-render{border-top:3px solid var(--route)} .l-render .tag{color:var(--route-deep)}
+  .l-logic{border-top:3px solid var(--teal)} .l-logic .tag{color:#0a857a}
+  .l-data{border-top:3px solid var(--mine)} .l-data .tag{color:var(--mine)}
+  .arch__flow{display:grid;place-items:center;color:var(--faint)}
+  .arch__flow svg{width:22px;height:22px}
+
+  .pipe{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:18px 0}
+  .pipe__step{flex:1 1 150px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:15px 16px;position:relative;min-width:150px}
+  .pipe__step .s{font-family:var(--font-mono);font-size:10.5px;color:var(--route-deep);font-weight:600}
+  .pipe__step b{display:block;margin:5px 0 3px;font-family:var(--font-display)}
+  .pipe__step span{font-size:13px;color:var(--muted)}
+  .pipe__arrow{align-self:center;color:var(--line-2);padding:0 6px;font-size:20px;display:grid;place-items:center}
+  @media(max-width:680px){.pipe__arrow{transform:rotate(90deg);width:100%;height:22px}}
+
+  /* ------------------------------------------------------------------ *
+   *  Roadmap
+   * ------------------------------------------------------------------ */
+  .road{position:relative;margin:24px 0 8px;padding-left:30px}
+  .road::before{content:"";position:absolute;left:9px;top:8px;bottom:8px;width:2px;background:linear-gradient(var(--route),var(--gps))}
+  .phase{position:relative;margin-bottom:20px}
+  .phase::before{content:"";position:absolute;left:-26px;top:4px;width:14px;height:14px;border-radius:50%;background:var(--paper);border:3px solid var(--route)}
+  .phase.later::before{border-color:var(--gps)}
+  .phase h4{margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  .phase .ph{font-family:var(--font-mono);font-size:11px;color:var(--faint)}
+  .phase p{margin:0;color:var(--muted);font-size:14.5px}
+
+  /* ------------------------------------------------------------------ *
+   *  Evidence list
+   * ------------------------------------------------------------------ */
+  .evi{border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden;background:var(--paper)}
+  .evi__head{display:flex;gap:12px;align-items:flex-start;padding:16px 18px;cursor:pointer;list-style:none}
+  .evi__head::-webkit-details-marker{display:none}
+  .evi__head:hover{background:var(--paper-2)}
+  .evi__claim{font-weight:600;color:var(--ink);flex:1;font-size:14.8px;line-height:1.5}
+  .evi__chev{color:var(--faint);transition:transform .2s ease;flex:none;margin-top:3px}
+  details[open] .evi__chev{transform:rotate(90deg)}
+  .evi__body{padding:0 18px 18px 18px;border-top:1px dashed var(--line);margin-top:0;padding-top:14px}
+  .evi__body .lbl{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:0 0 4px}
+  .evi__body p{font-size:14px;color:var(--muted)}
+  .src-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+  .src-list a{font-family:var(--font-mono);font-size:11.5px;background:var(--paper-2);border:1px solid var(--line);padding:4px 9px;border-radius:7px;color:var(--muted)}
+  .src-list a:hover{border-color:var(--route);color:var(--route-deep);text-decoration:none}
+  .subhead{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:30px 0 4px;display:flex;align-items:center;gap:10px}
+  .subhead::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  /* ------------------------------------------------------------------ *
+   *  Footer / misc
+   * ------------------------------------------------------------------ */
+  footer{background:var(--ink);color:#9aa6c5;padding:42px 26px;font-size:13.5px}
+  footer .inner{max-width:var(--maxw);margin:0 auto;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
+  footer a{color:#ffb487}
+  footer strong{font-family:var(--font-display)}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin:14px 0 0;font-size:12.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+
+  .totop{position:fixed;right:22px;bottom:22px;width:46px;height:46px;border-radius:50%;background:var(--ink);color:#fff;border:none;display:grid;place-items:center;cursor:pointer;box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease;z-index:60}
+  .totop.show{opacity:1;pointer-events:auto}
+  .totop:hover{transform:translateY(-3px);background:var(--route-deep)}
+
+  @media print{
+    .topbar,.toc,.totop,.hero__bg{display:none!important}
+    .layout{display:block;padding:0}
+    body{font-size:11pt}
+    .verdict{background:#fff;color:#000;box-shadow:none;border:1px solid #999}
+    .verdict h3,.verdict p,.verdict strong,.stack__row .pick{color:#000}
+    a{color:#000}
+    section{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+
+<!-- ===================== TOP BAR ===================== -->
+<div class="topbar">
+  <div class="topbar__inner">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="32" height="32" rx="8" fill="#0b1020"/>
+        <path d="M16 5 L25 27 L16 22 L7 27 Z" fill="#ff6a1a"/>
+        <path d="M16 5 L25 27 L16 22 Z" fill="#e8550a"/>
+      </svg>
+      <span>Offline Navigator&nbsp;·&nbsp;Research Brief</span>
+    </div>
+    <div class="topbar__meta">
+      <span class="pill">Android + iOS</span>
+      <span class="pill">Offline-first</span>
+      <span class="pill">v0.1 · 2026-05-31</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <svg class="hero__bg" viewBox="0 0 1200 460" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="route" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff6a1a"/><stop offset="1" stop-color="#ffb487"/>
+      </linearGradient>
+    </defs>
+    <g stroke="#5566aa" stroke-opacity="0.16" fill="none" stroke-width="1.2">
+      <path d="M-20 90 C 200 40, 360 150, 560 110 S 980 30, 1240 120"/>
+      <path d="M-20 150 C 220 100, 380 210, 600 170 S 1000 90, 1240 180"/>
+      <path d="M-20 220 C 240 170, 420 280, 640 240 S 1020 160, 1240 250"/>
+      <path d="M-20 300 C 200 250, 420 360, 660 320 S 1040 240, 1240 330"/>
+      <path d="M-20 380 C 220 330, 440 430, 680 390 S 1060 320, 1240 400"/>
+    </g>
+    <g stroke="#2a3658" stroke-opacity="0.5" stroke-width="1">
+      <line x1="150" y1="0" x2="150" y2="460"/><line x1="450" y1="0" x2="450" y2="460"/>
+      <line x1="750" y1="0" x2="750" y2="460"/><line x1="1050" y1="0" x2="1050" y2="460"/>
+      <line x1="0" y1="115" x2="1200" y2="115"/><line x1="0" y1="345" x2="1200" y2="345"/>
+    </g>
+    <!-- route line + pointer -->
+    <path d="M120 410 C 320 360, 360 240, 560 250 S 860 200, 980 90" stroke="url(#route)" stroke-width="4" fill="none" stroke-linecap="round" stroke-dasharray="2 10" stroke-opacity="0.9"/>
+    <circle cx="120" cy="410" r="7" fill="#2f6bff" stroke="#fff" stroke-width="2"/>
+    <g transform="translate(980 90) rotate(35)">
+      <path d="M0 -13 L9 11 L0 5 L-9 11 Z" fill="#ff6a1a" stroke="#fff" stroke-width="1.5"/>
+    </g>
+  </svg>
+  <div class="hero__inner">
+    <span class="eyebrow"><span class="dot"></span> Architecture &amp; Tech-Stack Research</span>
+    <h1>Building a highly accurate, <span class="accent">offline-first</span> navigation app</h1>
+    <p class="hero__sub">A decision-ready brief for an Android&nbsp;+&nbsp;iOS map app with downloadable regions, offline search, multi-mode trip planning, and full turn-by-turn navigation that runs on GPS alone — no internet after download.</p>
+    <div class="hero__chips">
+      <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>Downloadable regions</span>
+      <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Offline search</span>
+      <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg>Car · Walk · Bike · Motorbike</span>
+      <span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>Turn-by-turn (no voice in v1)</span>
+    </div>
+    <div class="hero__stats">
+      <div class="stat"><div class="n">8</div><div class="l">verified findings</div></div>
+      <div class="stat"><div class="n">24</div><div class="l">claims confirmed</div></div>
+      <div class="stat"><div class="n">27</div><div class="l">sources screened</div></div>
+      <div class="stat"><div class="n">$0</div><div class="l">core licensing cost</div></div>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== LAYOUT ===================== -->
+<div class="layout">
+
+  <!-- TOC -->
+  <aside class="toc" aria-label="Table of contents">
+    <p class="toc__title">On this page</p>
+    <nav>
+      <ol>
+        <li><a href="#summary">The bottom line</a></li>
+        <li><a href="#scope">What we're building</a></li>
+        <li><a href="#framework">Cross-platform vs native</a></li>
+        <li><a href="#stack">The stack, layer by layer</a></li>
+        <li><a href="#compare">Side-by-side comparisons</a></li>
+        <li><a href="#architecture">End-to-end architecture</a></li>
+        <li><a href="#features">How each feature is built</a></li>
+        <li><a href="#oss-vs-commercial">Open-source vs Mapbox</a></li>
+        <li><a href="#risks">Risks &amp; open questions</a></li>
+        <li><a href="#roadmap">Recommended roadmap</a></li>
+        <li><a href="#evidence">Evidence &amp; sources</a></li>
+      </ol>
+    </nav>
+  </aside>
+
+  <!-- MAIN -->
+  <main>
+
+    <!-- 1. SUMMARY -->
+    <section id="summary">
+      <div class="sec-head"><span class="sec-num">01</span><h2>The bottom line</h2></div>
+      <p class="sec-sub">If you only read one screen, read this. The most accurate offline result with the least licensing cost comes from a fully open-source stack, wrapped in one cross-platform UI.</p>
+
+      <div class="verdict">
+        <span class="tag">Recommended stack</span>
+        <h3>MapLibre&nbsp;+&nbsp;OpenStreetMap/PMTiles&nbsp;+&nbsp;Valhalla</h3>
+        <p>One cross-platform UI driving a <strong>native</strong> map-rendering and routing core. Everything the app needs to run with no internet after the initial download.</p>
+        <div class="stack">
+          <div class="stack__row"><span class="lyr">UI shell</span><span class="pick">Flutter or React Native<small>One codebase for both stores; drives true native map &amp; routing modules</small></span><span class="badge b-high">Verified · 3-0</span></div>
+          <div class="stack__row"><span class="lyr">Map render</span><span class="pick">MapLibre Native<small>Vector tiles, 2.5D tilt, custom directional pointer · BSD-2-Clause</small></span><span class="badge b-free">Free / OSS</span></div>
+          <div class="stack__row"><span class="lyr">Map data</span><span class="pick">OSM → PMTiles (Planetiler)<small>Per-region single-file tile archives bundled on device</small></span><span class="badge b-free">Free / OSS</span></div>
+          <div class="stack__row"><span class="lyr">Routing</span><span class="pick">Valhalla on-device<small>Tiled offline routing · Odin maneuvers · Meili map-matching · MIT</small></span><span class="badge b-risk">Maturity risk</span></div>
+          <div class="stack__row"><span class="lyr">Search</span><span class="pick">SQLite FTS5 index<small>Offline place search from an OSM-derived index — to be designed</small></span><span class="badge b-open">Open question</span></div>
+          <div class="stack__row"><span class="lyr">Location</span><span class="pick">Fused Location / CoreLocation<small>High-accuracy GPS + sensor-fused heading, snapped to road</small></span><span class="badge b-mine">Std. practice</span></div>
+        </div>
+      </div>
+
+      <div class="callout tip" style="margin-top:24px">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6M10 22h4M12 2a7 7 0 00-4 12.7c.6.5 1 1.3 1 2.1V18h6v-1.2c0-.8.4-1.6 1-2.1A7 7 0 0012 2z"/></svg>The one decision that needs a prototype first</div>
+        <p style="margin-bottom:0">Every layer above is solid and well-documented <em>except on-device routing</em>. The open-source path to running Valhalla inside a mobile app currently leans on a community build (<code>Rallista/valhalla-mobile</code>) that is self-described as “not yet ready for production.” <strong>De-risk this with a one-week spike before committing</strong> — and keep <strong>Mapbox Navigation SDK</strong> in your back pocket as a turnkey commercial fallback for the routing/navigation layer.</p>
+      </div>
+
+      <h3>Why this stack</h3>
+      <ul>
+        <li><strong>Genuinely offline.</strong> Vector tiles (PMTiles) and routing tiles (Valhalla) are both <em>file-based</em> and read straight from local disk — no tile server, no network calls once downloaded.</li>
+        <li><strong>Accurate.</strong> Valhalla ships <em>Meili</em> (hidden-Markov map-matching to snap noisy GPS onto roads) and <em>Odin</em> (turn-by-turn maneuver generation) — the two pieces that make navigation feel “Google-Maps smooth.”</li>
+        <li><strong>Free &amp; unencumbered.</strong> MapLibre is BSD-2-Clause, Valhalla is MIT, OSM data is free. No per-request map fees.</li>
+        <li><strong>One UI, both platforms.</strong> MapLibre has <em>official</em> React Native and Flutter bindings that render via the same native engine — so you write the screens once.</li>
+      </ul>
+
+      <div class="callout" style="border-left-color:var(--gps);background:var(--gps-soft)">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>How to read the confidence labels</div>
+        <p style="margin-bottom:0">This brief is built on a multi-agent research pass: 27 sources screened, 114 candidate claims extracted, 25 put through a 3-vote refutation panel, <strong>24 confirmed and merged into 8 findings</strong>. Where a recommendation rests on those findings, you'll see a <span class="badge b-high">Verified</span> badge with its vote. Where it's my engineering judgment or standard platform practice <em>beyond</em> the verified set, you'll see <span class="badge b-mine">Synthesis / Std. practice</span>, and genuinely unsettled areas are marked <span class="badge b-open">Open question</span>. <a href="#evidence">Full evidence ↓</a></p>
+      </div>
+    </section>
+
+    <!-- 2. SCOPE -->
+    <section id="scope">
+      <div class="sec-head"><span class="sec-num">02</span><h2>What we're building</h2></div>
+      <p class="sec-sub">The requirements that shaped every recommendation in this document.</p>
+      <div class="grid cols-3">
+        <div class="feature"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></div><h4>Offline-first</h4><p>Brief download over the internet, then full functionality on GPS alone. All map data stored locally.</p></div>
+        <div class="feature"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5M5 8v8l7 5 7-5V8"/></svg></div><h4>User-selectable regions</h4><p>A download manager where users pick areas to keep offline, like Google Maps “offline areas.”</p></div>
+        <div class="feature"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div><h4>Offline search</h4><p>Find destinations &amp; addresses across downloaded data — no internet.</p></div>
+        <div class="feature"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><h4>4 routing modes</h4><p>Plan A→B for car, walking, cycling and motorbike / two-wheeler.</p></div>
+        <div class="feature"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg></div><h4>Full turn-by-turn</h4><p>On-screen maneuvers, route progress and automatic off-route re-routing. <em>Voice deferred to a later version.</em></p></div>
+        <div class="feature"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l4 9-4-2-4 2 4-9z"/><circle cx="12" cy="16" r="6"/></svg></div><h4>Live GPS tracking</h4><p>A directional <em>pointer</em> (not a dot), swappable to car/bike icons, optional speedometer, optional 2.5D tilt.</p></div>
+      </div>
+    </section>
+
+    <!-- 3. FRAMEWORK -->
+    <section id="framework">
+      <div class="sec-head"><span class="sec-num">03</span><h2>Decision 1 — Cross-platform vs native</h2></div>
+      <p class="sec-sub">You want both Android and iOS. The key question: can you write the UI once and still get native-grade map rendering, routing and GPS accuracy? <strong>Yes — and the research confirms it.</strong></p>
+
+      <p class="lead">The heavy lifting in a navigation app (map rendering, routing, location) is native <em>no matter which framework you choose</em>. A cross-platform layer mainly owns the screens: search, the region download manager, the trip planner, and the on-screen navigation chrome. Both major cross-platform frameworks can render through the <em>same native MapLibre engine</em> and call into a native routing/location core.</p>
+
+      <div class="grid cols-2">
+        <div class="card">
+          <h4 style="margin-top:0">How the UI talks to native <span class="badge b-high">Verified · 3-0</span></h4>
+          <ul style="margin-bottom:0">
+            <li><strong>React Native</strong> bridges via <em>JSI / TurboModules</em> — a C++ layer that lets JS call native synchronously when needed (the default architecture since RN 0.76, late 2024).</li>
+            <li><strong>Flutter</strong> bridges via <em>MethodChannel</em> — documented async messaging between Dart and Kotlin/Swift.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4 style="margin-top:0">Map rendering is truly native <span class="badge b-high">Verified · 3-0</span></h4>
+          <ul style="margin-bottom:0">
+            <li><strong>RN:</strong> the official <code>@maplibre/maplibre-react-native</code> renders with MapLibre Native for Android &amp; iOS — not a WebView.</li>
+            <li><strong>Flutter:</strong> <code>flutter-maplibre</code> (officially announced by MapLibre, Sept 2024) uses maplibre-native on mobile.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout mine">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>My recommendation <span class="badge b-mine">Synthesis</span></div>
+        <p style="margin-bottom:8px"><strong>Lead with Flutter (or React Native if your team lives in JS/TS), with a thin native module for routing + location.</strong> A navigation app is rendering- and animation-heavy — smooth 60&nbsp;fps map-follow, a rotating pointer, a live speedometer overlay — which plays to Flutter's rendering consistency, and <code>flutter-maplibre</code> is MapLibre's officially blessed plugin. React Native is an equally defensible #2 (largest plugin ecosystem, official MapLibre binding, performant JSI bridge). <em>The research confirmed both are viable; it did not benchmark one against the other — the choice should weigh your team's skills.</em></p>
+        <p style="margin-bottom:0"><strong>Go fully native (Kotlin + Swift)</strong> only if you want maximum control over GPS/sensor fusion and the routing-core integration and are willing to pay for two separate UI codebases. It's the lowest <em>integration</em> risk for the routing core, at the highest <em>UI</em> cost.</p>
+      </div>
+    </section>
+
+    <!-- 4. STACK -->
+    <section id="stack">
+      <div class="sec-head"><span class="sec-num">04</span><h2>The stack, layer by layer</h2></div>
+      <p class="sec-sub">Each layer, what it does, the license, and the confidence level behind the recommendation.</p>
+
+      <h3>① Map rendering — MapLibre Native <span class="badge b-free">BSD-2-Clause · Free</span> <span class="badge b-high">Verified · 3-0</span></h3>
+      <p>The open-source successor to the last freely-licensed Mapbox GL Native, with native SDKs for Android and iOS sharing one C++ rendering core. It renders <strong>vector tiles</strong> (crisp at any zoom, restyleable, smaller than raster), supports <strong>camera pitch/tilt</strong> for the 2.5D look (the Flutter plugin exposes <code>initPitch</code> — max 60 on mobile — plus <code>minPitch</code>/<code>maxPitch</code> and bearing, and ships a “tilted and rotated map” preview), and supports <strong>symbol layers with custom, rotatable icons</strong> — exactly what a swappable directional pointer needs. <span class="badge b-med">Exact API names differ across the RN/Flutter/native bindings — confirm against the version you pick.</span></p>
+
+      <h3>② Map data &amp; tiles — OpenStreetMap → PMTiles via Planetiler <span class="badge b-free">Free / OSS</span> <span class="badge b-high">Verified · 3-0</span></h3>
+      <p><strong>PMTiles</strong> is a single-file archive that holds a whole pyramid of tiles and is read directly from local disk (or via HTTP range requests) <em>with no tile server</em> — ideal for bundling a downloaded region. <strong>Planetiler</strong> turns raw OpenStreetMap data into vector tiles fast (it can build the entire planet in a few hours on one machine) and outputs PMTiles or MBTiles. Region selection is a <em>build-time</em> step: <code>--area=&lt;named Geofabrik region&gt;</code> generates tiles for that extract — so you pre-cut packs per offered region rather than from an arbitrary on-device bounding box.</p>
+      <div class="callout warn">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>Licensing note</div>
+        <p style="margin-bottom:0">OpenStreetMap data is licensed <strong>ODbL</strong>. You must attribute OSM and respect its share-alike terms for the data. This is normal for OSM-based apps but worth designing the attribution UI for from day one.</p>
+      </div>
+
+      <h3>③ Routing — Valhalla on-device <span class="badge b-free">MIT</span> <span class="badge b-high">Verified · 3-0</span> <span class="badge b-risk">Mobile packaging immature</span></h3>
+      <p>Valhalla is an MIT-licensed routing engine with a <strong>tiled, hierarchical</strong> data structure explicitly designed for “a small memory footprint on memory-constrained devices… regional extracts and partial updates” — precisely the mechanism for offline, on-device routing of user-selected areas. It is multimodal (car, bike, pedestrian and more), generates turn-by-turn instructions via <strong>Odin</strong>, and snaps GPS to roads via <strong>Meili</strong> map-matching. Re-routing is a matter of re-requesting a route from the current snapped position.</p>
+      <div class="callout risk">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>The risk to plan around <span class="badge b-risk">Verified · 3-0</span></div>
+        <p style="margin-bottom:0">Running Valhalla <em>inside the app</em> currently relies on the community <code>Rallista/valhalla-mobile</code> packaging (an iOS Swift Package / <code>ValhallaCore.xcframework</code>, iOS 13+, and an Android Maven Central <code>com.rallista:valhalla</code> AAR). It genuinely runs offline with no runtime server — but the README says it is <strong>“not yet ready for production,”</strong> currently exposes only the <code>route()</code> function, and the upstream Valhalla project ships <em>no</em> first-party mobile binaries (its packaging discussion is still open). Treat on-device Valhalla as the item to validate first. <strong>Motorbike / two-wheeler</strong> isn't a guaranteed stock costing model — plan to author and validate a tuned custom profile.</p>
+      </div>
+
+      <h3>④ Offline search — SQLite FTS5 over an OSM index <span class="badge b-open">Open question</span> <span class="badge b-mine">Synthesis</span></h3>
+      <p>There's no single dominant turnkey offline-geocoding library for mobile, so most teams build a custom index: extract named features (POIs, streets, addresses) from the OSM data for each downloaded region into a <strong>SQLite database with the FTS5 full-text extension</strong>, then query it for instant offline search-as-you-type. <strong>This sits outside the verified findings</strong> — the research flagged offline search as under-addressed — so budget engineering time and prototype it. Reference points worth studying: <em>Photon</em> (offline-capable OSM geocoder) and <em>Organic Maps</em> (a shipping offline OSM app with on-device search).</p>
+
+      <h3>⑤ Location &amp; accuracy — Fused Location + CoreLocation <span class="badge b-mine">Std. practice</span></h3>
+      <p>On Android, <strong>FusedLocationProviderClient</strong> (Google Play services) is the recommended high-accuracy, battery-aware API; use <code>PRIORITY_HIGH_ACCURACY</code> for navigation. On iOS, <strong>CoreLocation</strong> is the equivalent with configurable desired accuracy. Layer on sensor fusion (compass/gyroscope) for a stable heading, light smoothing/Kalman-style filtering, and Valhalla's Meili map-matching to keep the pointer glued to the road. <em>These are documented platform standards rather than findings from this research pass — the specific accuracy techniques (Kalman tuning, sensor-fused heading) are an open question to settle in the prototype.</em></p>
+    </section>
+
+    <!-- 5. COMPARE -->
+    <section id="compare">
+      <div class="sec-head"><span class="sec-num">05</span><h2>Side-by-side comparisons</h2></div>
+      <p class="sec-sub">The alternatives at each decision point. The highlighted row is the recommendation. Rows beyond MapLibre/Valhalla/Mapbox are included for context but were <em>not</em> independently verified in this pass.</p>
+
+      <h3>Cross-platform framework</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Option</th><th>Map rendering</th><th>Native bridge</th><th>UI reuse</th><th>Best when</th></tr></thead>
+          <tbody>
+            <tr class="row-pick"><td>Flutter</td><td>flutter-maplibre (official, native engine)</td><td>MethodChannel (async)</td><td><span class="yes">High — 1 codebase</span></td><td>Rendering/animation-heavy nav UI; consistent perf</td></tr>
+            <tr><td>React Native</td><td>@maplibre/maplibre-react-native (official)</td><td>JSI / TurboModules (sync, C++)</td><td><span class="yes">High — 1 codebase</span></td><td>Team is JS/TS; largest plugin ecosystem</td></tr>
+            <tr><td>Native (Kotlin + Swift)</td><td>MapLibre Native SDKs directly</td><td>Direct — no bridge</td><td><span class="no">None — 2 codebases</span></td><td>Max control; lowest routing-core integration risk</td></tr>
+          </tbody>
+          <caption>All three can deliver the same accuracy; the trade is UI development cost vs. integration control. RN-vs-Flutter performance was not benchmarked here.</caption>
+        </table>
+      </div>
+
+      <h3>Map rendering library</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Library</th><th>Platforms</th><th>License</th><th>Tiles</th><th>2.5D tilt</th><th>Custom pointer</th><th>Offline</th></tr></thead>
+          <tbody>
+            <tr class="row-pick"><td>MapLibre Native</td><td>Android, iOS, RN, Flutter, web</td><td><span class="badge b-free">BSD-2-Clause</span></td><td>Vector + raster</td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes (local PMTiles)</span></td></tr>
+            <tr><td>Mapbox Maps SDK v11</td><td>Android, iOS, RN, Flutter</td><td><span class="badge b-paid">Proprietary</span></td><td>Vector + raster</td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes (offline regions)</span></td></tr>
+            <tr><td>OSMDroid</td><td><span class="meh">Android only</span></td><td><span class="badge b-free">Apache-2.0</span></td><td>Mostly raster</td><td><span class="no">Limited</span></td><td><span class="meh">Markers</span></td><td><span class="yes">Yes (cached)</span></td></tr>
+          </tbody>
+          <caption>OSMDroid is ruled out by the Android-only + raster constraints; the choice is MapLibre (free, verified) vs Mapbox (paid). OSMDroid was not independently verified here.</caption>
+        </table>
+      </div>
+
+      <h3>Offline routing engine</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Engine</th><th>License</th><th>On-device offline</th><th>Profiles</th><th>Turn-by-turn</th><th>Map-matching</th><th>Verified here?</th></tr></thead>
+          <tbody>
+            <tr class="row-pick"><td>Valhalla</td><td><span class="badge b-free">MIT</span></td><td><span class="yes">Yes — tiled regional extracts</span></td><td>Car · bike · foot · multimodal</td><td><span class="yes">Yes (Odin)</span></td><td><span class="yes">Yes (Meili)</span></td><td><span class="yes">Yes — but mobile build “not production-ready”</span></td></tr>
+            <tr><td>Mapbox Navigation SDK v3</td><td><span class="badge b-paid">Proprietary</span></td><td><span class="yes">Yes (TileStore)</span></td><td>Car · walk · cycling</td><td><span class="yes">Yes — turnkey</span></td><td><span class="yes">Yes</span></td><td><span class="yes">Yes — verified (vendor docs)</span></td></tr>
+            <tr><td>GraphHopper</td><td><span class="badge b-free">Apache-2.0</span></td><td><span class="meh">Yes on Android (offline graph)</span></td><td>Car · bike · foot (+ profiles)</td><td><span class="yes">Yes</span></td><td><span class="meh">Hybrid</span></td><td><span class="no">Not verified — strongest OSS fallback to evaluate</span></td></tr>
+            <tr><td>OSRM</td><td><span class="badge b-free">BSD</span></td><td><span class="no">Server-oriented; rare on-device</span></td><td>Lua profiles</td><td><span class="yes">Yes</span></td><td><span class="yes">Yes</span></td><td><span class="no">Not verified</span></td></tr>
+            <tr><td>BRouter</td><td><span class="badge b-free">Open</span></td><td><span class="yes">Yes (Android, offline)</span></td><td>Bike · foot · car</td><td><span class="no">Weak instructions</span></td><td><span class="no">No</span></td><td><span class="no">Not verified — niche (bike/hike)</span></td></tr>
+          </tbody>
+          <caption>Only Valhalla and Mapbox were verified for on-device offline turn-by-turn on <em>both</em> platforms. GraphHopper/OSRM/BRouter are context, not confirmed for this exact use.</caption>
+        </table>
+      </div>
+
+      <h3>Tile data format</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Format</th><th>What it is</th><th>Tile server?</th><th>Best for</th></tr></thead>
+          <tbody>
+            <tr class="row-pick"><td>PMTiles</td><td>Single-file archive of a tile pyramid (vector/raster)</td><td><span class="yes">No — local disk or HTTP range</span></td><td>Bundling per-region offline packs (recommended)</td></tr>
+            <tr><td>MBTiles</td><td>SQLite-based tile container</td><td><span class="meh">Usually a reader/server</span></td><td>Mature tooling; also output by Planetiler</td></tr>
+            <tr><td>Raw MVT directory</td><td>Thousands of individual tile files</td><td><span class="no">Yes</span></td><td>Server hosting — poor fit for a mobile bundle</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 6. ARCHITECTURE -->
+    <section id="architecture">
+      <div class="sec-head"><span class="sec-num">06</span><h2>End-to-end architecture</h2></div>
+      <p class="sec-sub">How the pieces fit together on-device, and the offline tile pipeline that feeds them.</p>
+
+      <h3>On-device layers</h3>
+      <div class="arch">
+        <div class="arch__layers">
+          <div class="alayer l-ui">
+            <div class="tag">① UI shell · Flutter / React Native</div>
+            <div class="alayer__row">
+              <span class="node"><span class="d" style="background:var(--gps)"></span><b>Map screen</b></span>
+              <span class="node"><span class="d" style="background:var(--gps)"></span><b>Search</b></span>
+              <span class="node"><span class="d" style="background:var(--gps)"></span><b>Region download manager</b></span>
+              <span class="node"><span class="d" style="background:var(--gps)"></span><b>Trip planner</b></span>
+              <span class="node"><span class="d" style="background:var(--gps)"></span><b>Navigation UI · banner · speedometer · ETA</b></span>
+            </div>
+          </div>
+          <div class="arch__flow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>
+          <div class="alayer l-render">
+            <div class="tag">② Native rendering — MapLibre Native</div>
+            <div class="alayer__row">
+              <span class="node"><span class="d" style="background:var(--route)"></span><b>Vector tile renderer</b> (reads local PMTiles)</span>
+              <span class="node"><span class="d" style="background:var(--route)"></span><b>2.5D pitched camera</b></span>
+              <span class="node"><span class="d" style="background:var(--route)"></span><b>Rotatable pointer / vehicle icon</b></span>
+              <span class="node"><span class="d" style="background:var(--route)"></span><b>Route line + maneuver markers</b></span>
+            </div>
+          </div>
+          <div class="arch__flow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>
+          <div class="alayer l-logic">
+            <div class="tag">③ Native logic core (per-platform module behind the bridge)</div>
+            <div class="alayer__row">
+              <span class="node"><span class="d" style="background:var(--teal)"></span><b>Valhalla</b> routing + Odin maneuvers</span>
+              <span class="node"><span class="d" style="background:var(--teal)"></span><b>Meili</b> map-matching (snap to road)</span>
+              <span class="node"><span class="d" style="background:var(--teal)"></span><b>SQLite FTS5</b> search index</span>
+              <span class="node"><span class="d" style="background:var(--teal)"></span><b>Location service</b> · Fused / CoreLocation + sensors</span>
+            </div>
+          </div>
+          <div class="arch__flow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>
+          <div class="alayer l-data">
+            <div class="tag">④ Local storage (per downloaded region)</div>
+            <div class="alayer__row">
+              <span class="node"><span class="d" style="background:var(--mine)"></span><b>PMTiles</b> map pack</span>
+              <span class="node"><span class="d" style="background:var(--mine)"></span><b>Valhalla</b> routing tiles</span>
+              <span class="node"><span class="d" style="background:var(--mine)"></span><b>SQLite</b> search DB</span>
+              <span class="node"><span class="d" style="background:var(--mine)"></span><b>Download manager</b> (the only internet user)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3>Navigation data flow (the live loop)</h3>
+      <p>GPS fix → location service smooths &amp; fuses heading → <strong>Meili snaps it to the road</strong> → compared against the planned route → if off-route, <strong>Valhalla re-routes</strong> from the snapped position → UI updates the instruction banner, advances the route line, rotates the pointer, and reads speed from the GPS fix into the speedometer overlay. All of it runs on local data.</p>
+
+      <h3>Offline tile pipeline (build-time / server-side, once)</h3>
+      <div class="pipe">
+        <div class="pipe__step"><span class="s">SOURCE</span><b>OSM extract</b><span>Regional <code>.osm.pbf</code> (e.g. Geofabrik)</span></div>
+        <div class="pipe__arrow">→</div>
+        <div class="pipe__step"><span class="s">BUILD</span><b>Planetiler</b><span>Generate vector tiles per region</span></div>
+        <div class="pipe__arrow">→</div>
+        <div class="pipe__step"><span class="s">PACK</span><b>PMTiles + Valhalla tiles + SQLite</b><span>One downloadable pack per region</span></div>
+        <div class="pipe__arrow">→</div>
+        <div class="pipe__step"><span class="s">HOST</span><b>Static CDN</b><span>Served once for download</span></div>
+        <div class="pipe__arrow">→</div>
+        <div class="pipe__step"><span class="s">DEVICE</span><b>Local storage</b><span>App reads files offline forever</span></div>
+      </div>
+    </section>
+
+    <!-- 7. FEATURES -->
+    <section id="features">
+      <div class="sec-head"><span class="sec-num">07</span><h2>How each feature is built</h2></div>
+      <p class="sec-sub">Mapping your requirements to concrete mechanisms.</p>
+
+      <h4>Downloadable regions &amp; the download manager</h4>
+      <p>Pre-build per-region packs (PMTiles map + Valhalla routing tiles + SQLite search DB) and host them statically. The in-app download manager fetches a selected region once over the internet, verifies it, and stores it locally. This is the <em>only</em> component that ever needs a network.</p>
+
+      <h4>Offline search</h4>
+      <p>Query the region's SQLite FTS5 index for search-as-you-type over place names, POIs and addresses. Results feed straight into the trip planner as the “to” point. <span class="badge b-open">Open question</span> — the exact offline-search approach wasn't settled by the research; prototype it early.</p>
+
+      <h4>Trip planning A→B for 4 modes</h4>
+      <p>Valhalla computes the route on-device for the selected profile (car / pedestrian / bicycle / motorbike). Car, bike and foot are first-class; <strong>motorbike/two-wheeler will likely need a tuned custom profile</strong> — plan to author and validate it.</p>
+
+      <h4>Turn-by-turn (no voice in v1)</h4>
+      <p>Odin produces the maneuver list (turn left, continue, roundabout exit, distances). The UI renders these as an instruction banner with the next maneuver and distance-to-it, advancing as you progress. Off-route detection compares the snapped position to the route geometry and triggers a Valhalla re-route. <em>Voice (Android/iOS TTS reading Odin's text) is a clean later add-on — the instruction text already exists.</em></p>
+
+      <h4>Live GPS pointer, vehicle icons, speedometer, 2.5D</h4>
+      <p>Render the user as a MapLibre <em>symbol</em> with a custom icon rotated to the heading — a directional arrow by default, swappable to a car/bike sprite when navigating. The speedometer reads speed from the location fix (a simple overlay widget). The 2.5D effect is the MapLibre camera's pitch/tilt with a follow-camera that tracks the pointer. <span class="badge b-mine">Synthesis</span> — the tilt/symbol capability is verified; this exact UI assembly is a recommended pattern to confirm against your binding.</p>
+
+      <div class="callout warn">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M12 3v18"/></svg>Storage &amp; data size — estimates to validate, not measured <span class="badge b-open">Open question</span></div>
+        <p style="margin-bottom:6px">The research did <strong>not</strong> benchmark sizes; measure these in your prototype. As rough industry ballparks to plan around: a metro-area vector tile pack is typically tens–low-hundreds of MB; a whole country can be hundreds of MB to several GB; Valhalla routing tiles for a region add a comparable order of magnitude.</p>
+        <p style="margin-bottom:0">Plan for: Android <strong>scoped storage</strong> (app-specific external dir, optional SD-card via the Storage Access Framework) and iOS app-sandbox storage with downloaded packs flagged so the OS handles backup/purge sensibly.</p>
+      </div>
+    </section>
+
+    <!-- 8. OSS vs Commercial -->
+    <section id="oss-vs-commercial">
+      <div class="sec-head"><span class="sec-num">08</span><h2>Open-source path vs Mapbox</h2></div>
+      <p class="sec-sub">You asked to prefer open-source where it doesn't hurt accuracy. Here's the honest trade.</p>
+      <div class="grid cols-2">
+        <div class="card" style="border-top:4px solid var(--teal)">
+          <h4 style="margin-top:0">Open-source · MapLibre + OSM/PMTiles + Valhalla</h4>
+          <p style="color:var(--ok);font-weight:600;margin-bottom:6px">Pros</p>
+          <ul><li>$0 licensing; no per-request fees</li><li>Full control over data, tiles and storage</li><li>Accuracy parity — Meili + Odin are strong</li><li>No vendor lock-in</li></ul>
+          <p style="color:var(--risk);font-weight:600;margin:12px 0 6px">Cons</p>
+          <ul style="margin-bottom:0"><li>On-device Valhalla packaging is immature (esp. iOS)</li><li>You build the search index &amp; download pipeline</li><li>More integration engineering up front</li></ul>
+        </div>
+        <div class="card" style="border-top:4px solid #7c879c">
+          <h4 style="margin-top:0">Commercial · Mapbox (Maps + Navigation SDK v3)</h4>
+          <p style="color:var(--ok);font-weight:600;margin-bottom:6px">Pros</p>
+          <ul><li>Turnkey offline turn-by-turn + automatic re-routing</li><li>TileStore manages routing <em>and</em> map tiles offline</li><li>Lower engineering risk; faster to a working nav app</li></ul>
+          <p style="color:var(--risk);font-weight:600;margin:12px 0 6px">Cons</p>
+          <ul style="margin-bottom:0"><li>Proprietary; usage-based cost that scales with users</li><li>Vendor lock-in on the navigation layer</li><li>Less control over data &amp; storage</li></ul>
+        </div>
+      </div>
+      <div class="callout mine">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>Recommendation <span class="badge b-mine">Synthesis</span></div>
+        <p style="margin-bottom:0">Commit to the <strong>open-source stack</strong>, but treat <strong>Mapbox as a pre-qualified fallback specifically for the routing/navigation layer</strong>. If the Valhalla-on-device spike (see Roadmap, Phase&nbsp;0) doesn't reach the reliability bar, swapping in Mapbox Navigation buys a turnkey path without re-architecting the rest. A pragmatic hybrid is also valid: MapLibre + OSM for rendering (free), Mapbox only for navigation.</p>
+      </div>
+    </section>
+
+    <!-- 9. RISKS -->
+    <section id="risks">
+      <div class="sec-head"><span class="sec-num">09</span><h2>Risks &amp; open questions</h2></div>
+      <p class="sec-sub">What to validate before betting the build on it.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Risk / question</th><th>Severity</th><th>Mitigation</th></tr></thead>
+          <tbody>
+            <tr><td>On-device Valhalla packaging immature (“not production-ready”)</td><td><span class="badge b-risk">High</span></td><td>Phase-0 spike on both OSes; Mapbox Navigation as fallback; or self-host Valhalla &amp; pre-bake tiles</td></tr>
+            <tr><td>iOS offline-routing integration under-documented</td><td><span class="badge b-med">Medium</span></td><td>Validate the xcframework / Swift Package path early, before UI work</td></tr>
+            <tr><td>Motorbike / two-wheeler profile not stock</td><td><span class="badge b-med">Medium</span></td><td>Author a tuned custom Valhalla profile; validate against local roads</td></tr>
+            <tr><td>Offline search approach unsettled (no turnkey lib)</td><td><span class="badge b-med">Medium</span></td><td>Prototype a custom SQLite FTS5 index; study Photon &amp; Organic Maps</td></tr>
+            <tr><td>GPS-accuracy techniques not specified by research</td><td><span class="badge b-med">Medium</span></td><td>Settle Kalman/sensor-fusion heading + Meili snapping in the prototype</td></tr>
+            <tr><td>Tile/routing data sizes unknown (not benchmarked)</td><td><span class="badge b-med">Medium</span></td><td>Measure real region packs before sizing storage UX</td></tr>
+            <tr><td>GraphHopper/OSRM/BRouter not verified for this use</td><td><span class="badge b-med">Low</span></td><td>If de-risking Valhalla, benchmark GraphHopper offline on both OSes</td></tr>
+            <tr><td>MapLibre tilt/marker API differs per binding</td><td><span class="badge b-med">Low</span></td><td>Confirm against the exact RN/Flutter binding version you adopt</td></tr>
+            <tr><td>OSM ODbL attribution &amp; share-alike</td><td><span class="badge b-med">Low</span></td><td>Design attribution UI; follow ODbL for derived data</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout tip">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>What's rock-solid (the verified core)</div>
+        <p style="margin-bottom:0">Cross-platform UI over native rendering, MapLibre for offline vector maps, PMTiles + Planetiler for the data pipeline, Valhalla's <em>capabilities</em> (Meili/Odin) and its on-device feasibility, and Mapbox as the commercial fallback — all <span class="badge b-high">Verified</span> in this pass. The single concentrated risk is <em>packaging Valhalla to run inside the app</em>, which is exactly why Phase&nbsp;0 exists. Location APIs (Fused/CoreLocation) are documented platform standards rather than research findings.</p>
+      </div>
+    </section>
+
+    <!-- 10. ROADMAP -->
+    <section id="roadmap">
+      <div class="sec-head"><span class="sec-num">10</span><h2>Recommended roadmap</h2></div>
+      <p class="sec-sub">De-risk first, then build outward from a working offline map.</p>
+      <div class="road">
+        <div class="phase"><h4><span class="ph">PHASE 0</span> De-risk spikes <span class="badge b-risk">do this first</span></h4><p>Two throwaway prototypes on both Android &amp; iOS: (a) MapLibre rendering a local PMTiles pack; (b) Valhalla computing a route on-device from local tiles. Decide open-source vs Mapbox-fallback based on the result.</p></div>
+        <div class="phase"><h4><span class="ph">PHASE 1</span> Offline map + region downloads</h4><p>Map screen with pan/zoom and 2.5D tilt, plus the region download manager reading/writing local packs.</p></div>
+        <div class="phase"><h4><span class="ph">PHASE 2</span> Offline search</h4><p>SQLite FTS5 index + search-as-you-type over downloaded regions.</p></div>
+        <div class="phase"><h4><span class="ph">PHASE 3</span> Trip planning A→B</h4><p>Valhalla routing for all four profiles; draw the route line and summary (distance/ETA).</p></div>
+        <div class="phase"><h4><span class="ph">PHASE 4</span> Live tracking</h4><p>High-accuracy location, map-matched directional pointer, swappable vehicle icons, follow-camera, speedometer overlay.</p></div>
+        <div class="phase"><h4><span class="ph">PHASE 5</span> Full turn-by-turn</h4><p>Odin maneuver banner, route-progress, off-route detection &amp; automatic re-routing.</p></div>
+        <div class="phase later"><h4><span class="ph">LATER</span> Optional add-ons</h4><p>Voice guidance (TTS over Odin text), richer 3D, lane guidance, traffic — none required for v1.</p></div>
+      </div>
+    </section>
+
+    <!-- 11. EVIDENCE -->
+    <section id="evidence">
+      <div class="sec-head"><span class="sec-num">11</span><h2>Evidence &amp; sources</h2></div>
+      <p class="sec-sub">The 8 findings the research converged on. The harness screened 27 sources, extracted 114 candidate claims, and put 25 through a 3-vote refutation panel (a claim dies if ≥2 of 3 verifiers refute it). 24 survived and were merged into the findings below. Click any finding to expand its evidence and sources.</p>
+
+      <div class="legend">
+        <span><span class="badge b-high">Verified</span> survived the panel (vote shown)</span>
+        <span><span class="badge b-med">Synthesis</span> merged conclusion across findings</span>
+        <span><span class="badge b-risk">Risk</span> verified, with a maturity caveat</span>
+        <span><span class="badge b-mine">Std. practice</span> documented fact, beyond this pass</span>
+        <span><span class="badge b-open">Open</span> flagged unaddressed by the research</span>
+      </div>
+
+      <div class="subhead">The 8 verified findings</div>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">A cross-platform UI (React Native or Flutter) can drive <em>true native</em> MapLibre vector rendering on both Android and iOS from one codebase.</span><span class="badge b-high">Verified · 3-0</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>Official <code>@maplibre/maplibre-react-native</code> renders with MapLibre Native for Android &amp; iOS; the Flutter maplibre plugin uses maplibre-native on mobile (MapLibre org announcement, Sept 2024). The earlier flutter-mapbox-gl plugin independently proved Flutter can embed native vector maps. Both render via the same native engine, not a WebView. <em>(Merged from 4 confirmed claims.)</em></p><div class="src-list"><a href="https://github.com/maplibre/maplibre-react-native">maplibre-react-native</a><a href="https://github.com/josxha/flutter-maplibre">flutter-maplibre</a><a href="https://maplibre.org/news/2024-09-06-flutter/">maplibre.org/news</a><a href="https://github.com/flutter-mapbox-gl/maps">flutter-mapbox-gl</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">A cross-platform UI can integrate a native offline routing/location core — RN via JSI/TurboModules (sync C++), Flutter via MethodChannel (async).</span><span class="badge b-high">Verified · 3-0</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>RN's JSI is a C++ layer enabling synchronous JS↔native calls; TurboModules &amp; Fabric build on it (default since RN 0.76, late 2024). Flutter's MethodChannel provides documented async Dart↔Kotlin/Swift messaging. Both are first-class bridges, confirming a heavy native routing/location core can back a thin cross-platform UI. <em>(Merged from 3 confirmed claims.)</em></p><div class="src-list"><a href="https://reactnative.dev/architecture/landing-page">RN architecture</a><a href="https://docs.flutter.dev/platform-integration/platform-channels">Flutter platform channels</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">MapLibre Native is the recommended rendering core: free (BSD-2-Clause, no usage fees), shared Android+iOS+desktop engine, mature Mapbox-GL lineage, with 2.5D tilt/pitch and rotation.</span><span class="badge b-high">Verified · 3-0</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>MapLibre Native is BSD-2-Clause (verified via GitHub SPDX + LICENSE), free for commercial use with no usage fees, unlike Mapbox's proprietary usage-priced SDK. It forked from Mapbox GL Native before Mapbox's Dec-2020 non-OSS switch, inheriting that renderer, and runs on Android/iOS/Linux/Windows/macOS/Node. Plugins expose pitch/tilt (<code>initPitch</code> max 60 on mobile, <code>minPitch</code>/<code>maxPitch</code>, <code>initBearing</code>) and a “tilted and rotated map” preview — the required 2.5D, not full 3D. <em>(Merged from 4 confirmed claims.)</em></p><div class="src-list"><a href="https://github.com/maplibre/maplibre-native">maplibre-native</a><a href="https://github.com/josxha/flutter-maplibre">flutter-maplibre</a><a href="https://maplibre.org/projects/maplibre-native/">maplibre.org/projects</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Per-region offline vector tiles can be produced with a fully open-source OSM→MVT→PMTiles pipeline using Planetiler; PMTiles bundles a region as one server-less file.</span><span class="badge b-high">Verified · 3-0</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>PMTiles is a single-file archive of a Z/X/Y tile pyramid (incl. OSM vector tiles), so a region is one on-device file; it serves from commodity storage (S3/R2) via HTTP Range Requests with no tile backend. Planetiler generates MVT from OSM, outputs MBTiles or PMTiles (by extension), and supports bounded per-region builds via <code>--area</code> (a named Geofabrik region — a build-time developer step, not an arbitrary on-device bbox). <em>(Merged from 4 confirmed claims.)</em></p><div class="src-list"><a href="https://docs.protomaps.com/pmtiles/">protomaps pmtiles</a><a href="https://github.com/onthegomap/planetiler">planetiler</a><a href="https://github.com/protomaps/PMTiles">PMTiles</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Valhalla is the recommended on-device routing engine: MIT, OSM-based, tiled hierarchical data explicitly designed for offline/regional extracts on constrained devices, with Odin maneuvers and Meili map-matching, multimodal.</span><span class="badge b-high">Verified · 3-0</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>Valhalla (and all Valhalla-org projects) use the MIT License (verified via COPYING + GitHub API). Its README states a design goal of “a small memory footprint on memory-constrained devices… enable offline routing… regional extracts and partial updates,” and that it “is also used on iOS and Android devices.” <em>Odin</em> generates locale-specific turn-by-turn maneuvers/narrative; <em>Meili</em> map-matches a GPS trace to the road network — covering snapping and instruction generation. Multimodal car/foot/bike (and motorbike via custom profile). <em>(Merged from 4 confirmed claims.)</em></p><div class="src-list"><a href="https://github.com/valhalla/valhalla">github/valhalla</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Valhalla can be embedded on-device on both platforms today via the community <code>valhalla-mobile</code> (offline, no runtime server) — but it is self-described as not yet production-ready.</span><span class="badge b-risk">Verified · 3-0 · Risk</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>Rallista's valhalla-mobile builds Valhalla as a static iOS library (Swift Package / <code>ValhallaCore.xcframework</code>, iOS 13+) and an Android library (Maven Central <code>com.rallista:valhalla</code>, .aar via Gradle). It “currently only exposes the route function… using a downloaded pre-parsed valhalla tileset,” confirming genuine on-device offline routing with no runtime server. <strong>Caveat:</strong> the README states it is “not yet ready for production use” (early versions: iOS 1.0.0, Android 0.1.0), and the upstream Valhalla repo ships no first-party mobile binaries (Discussion #4509 open) — real integration/maturity risk. <em>(Merged from 2 confirmed claims.)</em></p><div class="src-list"><a href="https://github.com/Rallista/valhalla-mobile">Rallista/valhalla-mobile</a><a href="https://github.com/valhalla/valhalla">github/valhalla</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">The commercial fallback, Mapbox Navigation SDK v3, provides turnkey fully-offline turn-by-turn with automatic off-route rerouting and a TileStore bundling routing + map tiles — but is proprietary and usage-priced.</span><span class="badge b-high">Verified · 3-0</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>Mapbox Navigation SDK v3 (iOS) docs: predownload data to “take advantage of turn-by-turn navigation and request new routes when going off-route” and reroute “without requiring network connectivity.” Offline data lives in a TileStore that “handles both navigation data for generating routes and map tiles,” loaded per-region via <code>loadTileRegion()</code> (the current interface, superseding the deprecated OfflineManager). Trade-off: proprietary, usage-based (MAU/map-load) pricing, vs no usage fees for MapLibre+Valhalla. <em>(Merged from 3 confirmed claims; based on Mapbox's own docs.)</em></p><div class="src-list"><a href="https://docs.mapbox.com/ios/navigation/guides/advanced/offline/">mapbox ios offline nav</a><a href="https://docs.mapbox.com/android/navigation/guides/pricing/">mapbox nav pricing</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Recommended end-to-end architecture: cross-platform UI over a native core = MapLibre (render) + OSM/PMTiles (data) + Valhalla (routing), with Mapbox Navigation as the de-risking fallback.</span><span class="badge b-med">Synthesis · Medium</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Evidence</p><p>Each layer is independently confirmed by the findings above; the fully open-source path avoids usage fees and lock-in while OSM+Valhalla deliver competitive accuracy. Confidence is <strong>Medium</strong> (not High) because the end-to-end integration is a synthesis rather than a single verified working reference app, and the on-device Valhalla layer is pre-production. The Mapbox path is the verified turnkey fallback. For routing, GraphHopper/OSRM/BRouter were named in scope but <strong>only Valhalla and Mapbox were verified</strong> for on-device offline turn-by-turn on both platforms.</p><div class="src-list"><a href="https://github.com/maplibre/maplibre-native">maplibre-native</a><a href="https://github.com/valhalla/valhalla">valhalla</a><a href="https://github.com/Rallista/valhalla-mobile">valhalla-mobile</a><a href="https://docs.protomaps.com/pmtiles/">pmtiles</a><a href="https://github.com/onthegomap/planetiler">planetiler</a><a href="https://docs.mapbox.com/ios/navigation/guides/advanced/offline/">mapbox offline</a></div></div></details>
+
+      <div class="subhead">Beyond the verified set — recommendations &amp; open questions</div>
+      <div class="callout mine" style="margin-top:6px">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>Read these differently from the 8 above</div>
+        <p style="margin-bottom:0">The items below are <strong>not</strong> among the verified findings. They're either well-established platform facts I'm recommending, or areas the research explicitly flagged as under-addressed. No adversarial vote attaches to them — I've labeled each so the distinction is clear.</p>
+      </div>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Location accuracy — FusedLocationProvider (Android) &amp; CoreLocation (iOS) with sensor-fused heading.</span><span class="badge b-mine">Std. practice</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Status</p><p>These are the documented high-accuracy location APIs on each platform (Google's <code>PRIORITY_HIGH_ACCURACY</code>; Apple CoreLocation desired-accuracy + heading). The research fetched platform docs for both, but <strong>no GPS-accuracy claim made the final 8 findings</strong>, and specifics — Kalman tuning, gyro/compass sensor fusion, relying on Meili vs a local filter for a smooth pointer — are an open question to settle in the prototype.</p><div class="src-list"><a href="https://developer.android.com/develop/sensors-and-location/location/request-updates">Android request-updates</a><a href="https://developers.google.com/android/reference/com/google/android/gms/location/Priority">Android Priority</a><a href="https://developer.apple.com/documentation/corelocation/cllocationmanager">Apple CLLocationManager</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Offline place search — custom SQLite FTS5 index over OSM data (study Photon &amp; Organic Maps).</span><span class="badge b-open">Open question</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Status</p><p>The research <strong>did not resolve</strong> offline geocoding/search; it's listed as an open question. The recommended approach — a custom SQLite FTS5 index built per region from OSM named features — is standard but build-your-own. Worth studying: <em>Photon</em> (offline-capable OSM geocoder) and <em>Organic Maps</em> (a shipping fully-offline OSM app with on-device search). Validate ranking, prefix and fuzzy matching in a prototype.</p><div class="src-list"><a href="https://github.com/komoot/photon">komoot/photon</a><a href="https://github.com/organicmaps/organicmaps">organicmaps</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Alternative routing engines — GraphHopper / OSRM / BRouter were not verified for this exact use.</span><span class="badge b-open">Not verified</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Status</p><p>Named in the research scope, but <strong>only Valhalla and Mapbox were verified</strong> for on-device offline turn-by-turn on both platforms. <em>GraphHopper</em> (Apache-2.0) is the strongest OSS fallback to evaluate — it has well-attested offline routing on Android with profiles and instructions, though current first-class mobile packaging is less clear than its server product. Treat as a de-risking option to benchmark, not a confirmed choice.</p><div class="src-list"><a href="https://github.com/graphhopper/graphhopper">github/graphhopper</a></div></div></details>
+
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">Storage &amp; data sizes — not benchmarked; scoped-storage strategy to be designed.</span><span class="badge b-open">Open question</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Status</p><p>The research did <strong>no hands-on benchmarking</strong> of tile/route sizes or performance. Real per-region pack sizes, the Android scoped-storage / SD-card approach, and the iOS sandbox/backup-purge strategy must be measured and decided in the prototype. The size figures in this brief are industry ballparks, not measurements.</p></div></details>
+
+      <div class="subhead">The research's own open questions</div>
+      <ul>
+        <li>Best <strong>offline geocoding/place-search</strong> approach for OSM on-device (Photon offline, SQLite FTS, engine-built-in search, or Mapbox offline search) and its cross-platform performance within a downloaded region.</li>
+        <li>Concrete <strong>GPS/location accuracy</strong> practice for a smooth pointer: Fused vs raw GPS, iOS CoreLocation settings, compass/gyro fusion for heading, Kalman filtering vs relying on Meili map-matching.</li>
+        <li>How <strong>GraphHopper/OSRM/BRouter</strong> compare to Valhalla for on-device offline turn-by-turn with all four profiles (esp. a real motorbike costing model) on both iOS and Android.</li>
+        <li>Real-world <strong>tile/route data sizes</strong> per region and the storage strategy (Android scoped storage / SD card, iOS storage) for the download manager.</li>
+        <li>Which framework (<strong>React Native vs Flutter</strong>) yields better measured runtime performance for continuous navigation rendering, and whether native-module integration effort is meaningfully lower on one.</li>
+      </ul>
+
+      <div class="subhead">Refuted (killed by the panel)</div>
+      <details class="evi"><summary class="evi__head"><span class="evi__claim">“The flutter-mapbox-gl plugin supports offline regions with sideloading &amp; download progress tracking.”</span><span class="badge b-risk">Refuted · 1-2</span><svg class="evi__chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></summary><div class="evi__body"><p class="lbl">Why it was killed</p><p>This claim about the older, now-deprecated <code>flutter-mapbox-gl</code> plugin failed verification (only 1 of 3 verifiers upheld it). Practical takeaway: <strong>don't rely on flutter-mapbox-gl for offline region management</strong> — use the maintained MapLibre fork / official bindings instead.</p><div class="src-list"><a href="https://github.com/flutter-mapbox-gl/maps">flutter-mapbox-gl</a></div></div></details>
+
+      <div class="callout warn" style="margin-top:24px">
+        <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>Research limitations (stated by the harness)</div>
+        <p style="margin-bottom:6px">Verification favored official docs and GitHub repos. The findings confirmed <strong>MapLibre + Valhalla + Mapbox + PMTiles/Planetiler</strong> but did <strong>not</strong> independently verify the other named options — GraphHopper, OSRM, BRouter, OSMDroid, Photon/Nominatim/SQLite-FTS, or any specific GPS-accuracy techniques. Offline <strong>search</strong> (req 5), <strong>GPS accuracy</strong> (req 7), <strong>storage/data sizes</strong> (req 8) and the <strong>pointer/speedometer UI</strong> detail (req 6) are essentially open.</p>
+        <p style="margin-bottom:0">The Mapbox claims rest on Mapbox's own documentation (appropriate but not third-party), and <strong>no hands-on benchmarking</strong> of accuracy, tile sizes, or performance was done. This reflects 2025/2026 versions (RN New Architecture default since 0.76; Flutter MapLibre plugin Sept 2024; Mapbox Nav SDK v3; PMTiles v3) — validate the moving parts in a prototype.</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <div class="inner">
+    <div>
+      <strong style="color:#fff">Offline Navigator — Research Brief</strong><br/>
+      Generated 2026-05-31 · 8 verified findings · 24 claims confirmed · 27 sources screened · <span style="color:#ffb487">a starting point for our design discussion</span>
+    </div>
+    <div style="text-align:right;font-size:12.5px;color:#7783a0">
+      Recommended stack:<br/>MapLibre · OSM/PMTiles · Valhalla · SQLite FTS5
+    </div>
+  </div>
+</footer>
+
+<button class="totop" id="totop" aria-label="Back to top"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+
+<script>
+  // Scrollspy for the TOC
+  (function(){
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+    var map = {};
+    links.forEach(function(a){ var id=a.getAttribute('href').slice(1); var el=document.getElementById(id); if(el) map[id]=a; });
+    var sections = Object.keys(map).map(function(id){return document.getElementById(id);});
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          links.forEach(function(a){a.classList.remove('active');});
+          var a = map[e.target.id]; if(a) a.classList.add('active');
+        }
+      });
+    }, {rootMargin:'-20% 0px -72% 0px', threshold:0});
+    sections.forEach(function(s){ if(s) obs.observe(s); });
+  })();
+
+  // Back-to-top
+  (function(){
+    var btn = document.getElementById('totop');
+    window.addEventListener('scroll', function(){
+      if(window.scrollY > 600) btn.classList.add('show'); else btn.classList.remove('show');
+    }, {passive:true});
+    btn.addEventListener('click', function(){ window.scrollTo({top:0, behavior:'smooth'}); });
+  })();
+</script>
+</body>
+</html>
