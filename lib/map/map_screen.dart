@@ -27,6 +27,8 @@ class _MapScreenState extends State<MapScreen> {
   StyleController? _style;
   StreamSubscription<UserLocation>? _locSub;
   String? _styleUrl;
+  String? _bootError;
+  UserLocation? _lastLoc;
   bool _tilted = false;
   // v1: follow stays on until recenter is re-tapped; maplibre 0.3.5 has no
   // reliable user-gesture signal to auto-disable follow on manual pan.
@@ -45,9 +47,24 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _boot() async {
-    final ready = await _tiles.ensureReady();
-    if (!mounted) return;
-    setState(() => _styleUrl = ready.styleUrl);
+    try {
+      final ready = await _tiles.ensureReady();
+      if (!mounted) return;
+      setState(() {
+        _styleUrl = ready.styleUrl;
+        _bootError = null;
+      });
+    } catch (e) {
+      // Asset copy / disk full / port bind / corrupt tile pack — surface a
+      // clear error with a retry instead of spinning forever (spec §8).
+      if (!mounted) return;
+      setState(() => _bootError = 'Could not load the offline map.\n$e');
+    }
+  }
+
+  void _retryBoot() {
+    setState(() => _bootError = null);
+    _boot();
   }
 
   @override
@@ -66,7 +83,12 @@ class _MapScreenState extends State<MapScreen> {
 
   void _recenter() {
     setState(() => _follow = true);
-    _controller?.animateCamera(center: _center, zoom: 14);
+    // Recenter on the user if we have a fix; otherwise fall back to the
+    // bundled region's center. The next GPS tick keeps it glued to the user.
+    final loc = _lastLoc;
+    final target =
+        loc != null ? Geographic(lon: loc.lng, lat: loc.lat) : _center;
+    _controller?.animateCamera(center: target, zoom: 14);
   }
 
   Future<void> _setupPointer(StyleController style) async {
@@ -110,6 +132,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _onLocation(UserLocation loc) {
+    _lastLoc = loc;
     final style = _style;
     if (style == null) return;
     // Update the GeoJSON source with new position and heading.
@@ -182,6 +205,11 @@ class _MapScreenState extends State<MapScreen> {
   void showPermissionIssueForTest(LocationPermissionState s) =>
       setState(() => _permIssue = s);
 
+  /// Exposed for widget tests only — simulates a boot failure.
+  @visibleForTesting
+  void showBootErrorForTest(String message) =>
+      setState(() => _bootError = message);
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -204,6 +232,8 @@ class _MapScreenState extends State<MapScreen> {
                 _setupPointer(style);
               },
             )
+          else if (_bootError != null)
+            _BootError(message: _bootError!, onRetry: _retryBoot)
           else
             const Center(child: CircularProgressIndicator()),
           // Permission banner — overlays the map but does not block pan/zoom.
@@ -232,6 +262,39 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Full-screen error state shown when the offline map fails to load, with a
+/// retry affordance so the user isn't stuck on an indefinite spinner.
+class _BootError extends StatelessWidget {
+  const _BootError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.map_outlined, size: 48, color: Color(0xFF8A93A6)),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              key: const Key('retryBootButton'),
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }
