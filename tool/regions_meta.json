@@ -5,5 +5,40 @@
     "state": "Jharkhand",
     "bbox": [85.95, 22.15, 86.95, 23.0],
     "version": 1
+  },
+  {
+    "id": "in-jh-ranchi",
+    "name": "Ranchi",
+    "state": "Jharkhand",
+    "bbox": [84.9, 22.9, 85.9, 23.7],
+    "version": 1
+  },
+  {
+    "id": "in-jh-dhanbad",
+    "name": "Dhanbad",
+    "state": "Jharkhand",
+    "bbox": [86.05, 23.55, 86.95, 24.1],
+    "version": 1
+  },
+  {
+    "id": "in-jh-bokaro",
+    "name": "Bokaro",
+    "state": "Jharkhand",
+    "bbox": [85.7, 23.4, 86.45, 23.95],
+    "version": 1
+  },
+  {
+    "id": "in-jh-hazaribagh",
+    "name": "Hazaribagh",
+    "state": "Jharkhand",
+    "bbox": [85.0, 23.7, 85.9, 24.55],
+    "version": 1
+  },
+  {
+    "id": "in-jh-west-singhbhum",
+    "name": "West Singhbhum (Chaibasa)",
+    "state": "Jharkhand",
+    "bbox": [85.0, 21.95, 86.1, 22.9],
+    "version": 1
   }
 ]

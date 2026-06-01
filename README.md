@@ -86,8 +86,10 @@ gh release create regions-v1 --repo <owner>/<repo> --title "Offline regions v1" 
 ```
 
 Add more districts by appending to `tool/regions_meta.json` and re-running steps 2–3.
-**First published region:** East Singhbhum (Jamshedpur) — 14.9 MB routing tiles (verified:
-Jamshedpur→Ghatshila routes on roads, 52 km / 30 maneuvers), 1,451 searchable places.
+**Published regions (`regions-v1`):** six Jharkhand districts — East Singhbhum (Jamshedpur),
+Ranchi, Dhanbad, Bokaro, Hazaribagh, and West Singhbhum (Chaibasa), 13–34 MB each. Routing
+verified on-device (East Singhbhum loads 35 tiles and routes Jamshedpur→Ghatshila, 52 km) and
+in Docker (Ranchi routes 17.7 km / 20 maneuvers).
 **Known limitation:** clipping a bbox out of the country extract leaves boundary relations
 incomplete, so `valhalla_build_admins` inserts 0 admin areas — routing works, but admin
 metadata (driving-side, names) is limited; a future improvement is an osmium
