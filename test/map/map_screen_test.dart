@@ -87,6 +87,17 @@ void main() {
     expect(find.byKey(const Key('directionsButton')), findsOneWidget);
   });
 
+  testWidgets('settings button is present (opens the region manager)',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
+    await tester.pump();
+    expect(find.byKey(const Key('settingsButton')), findsOneWidget);
+    // With autoStart:false there is no RegionController yet, so tapping is a
+    // safe no-op (must not throw).
+    await tester.tap(find.byKey(const Key('settingsButton')));
+    await tester.pump();
+  });
+
   testWidgets('drive mode shows the nav overlay and hides the FABs',
       (tester) async {
     await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));

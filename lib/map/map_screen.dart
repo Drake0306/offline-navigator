@@ -28,6 +28,19 @@ import 'package:offline_navigator/nav/heading_provider.dart';
 import 'package:offline_navigator/nav/trip_progress.dart';
 import 'package:offline_navigator/nav/navigation_overlay.dart';
 import 'package:offline_navigator/routing/live_progress.dart';
+import 'package:http/http.dart' as http;
+import 'package:offline_navigator/regions/region.dart';
+import 'package:offline_navigator/regions/region_store.dart';
+import 'package:offline_navigator/regions/region_downloader.dart';
+import 'package:offline_navigator/regions/region_catalog.dart';
+import 'package:offline_navigator/regions/region_controller.dart';
+import 'package:offline_navigator/regions/default_region.dart';
+import 'package:offline_navigator/settings/settings_screen.dart';
+
+/// The hosted region catalog (GitHub Releases). 404s until regions are
+/// published; `RegionController.refreshCatalog` surfaces that as a soft error.
+const String kRegionCatalogUrl =
+    'https://github.com/Drake0306/offline-navigator/releases/download/regions-v1/regions.json';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key, this.autoStart = true});
@@ -71,8 +84,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // Trip planner state.
   // No silent fallback: a native routing failure now surfaces a real error in
   // the trip panel instead of secretly drawing a straight line. (FakeRoutingService
-  // is kept for tests only.) Routing works only within the bundled Ghatshila tiles.
-  final RoutingService _routing = ValhallaRoutingService(fallbackToFake: false);
+  // is kept for tests only.) `regionDir` is set to the active region so routing
+  // works within whichever district is downloaded + active.
+  final ValhallaRoutingService _routing =
+      ValhallaRoutingService(fallbackToFake: false);
   TripState _trip = const TripState(mode: TravelMode.car);
   RoutePlan? _plan;
   // True only AFTER the route line source+layer are added. Reset to false on
@@ -86,6 +101,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   String? _navStatus; // "Recalculating…" / "You have arrived" / off-route message
   bool _rerouting = false;
   int _offRouteHits = 0;
+
+  // Region download manager. Created in _boot; null in tests (autoStart:false).
+  RegionStore? _store;
+  RegionController? _regions;
+  http.Client? _http;
+  String? _activeRegionId;
+  // The map's initial center; set to the active region's center at boot so the
+  // map opens over the downloaded district (GPS follow takes over once fixed).
+  Geographic _mapCenter = const Geographic(lon: 86.476, lat: 22.586);
 
   /// How long the follow-camera takes to glide to each new GPS fix. Short
   /// enough to keep up with ~1 fix/sec without the 2s default piling up and
@@ -116,7 +140,33 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   Future<void> _boot() async {
     try {
-      final ready = await _tiles.ensureReady();
+      // Region setup: seed the bundled Ghatshila region, then resolve the active
+      // region and point every consumer (tiles, routing, search) at its files.
+      final store = await RegionStore.open();
+      await seedDefaultRegion(store);
+      final client = http.Client();
+      final controller = RegionController(
+        store: store,
+        downloader: RegionDownloader(client),
+        catalogSource: () =>
+            RegionCatalog.fetch(client, Uri.parse(kRegionCatalogUrl)),
+      );
+      await controller.loadInstalled();
+      controller.addListener(_onRegionsChanged);
+      _store = store;
+      _regions = controller;
+      _http = client;
+      final activeId = controller.activeRegionId ?? ghatshilaRegion.id;
+      _activeRegionId = activeId;
+      final files = store.filesFor(activeId);
+      _routing.regionDir = files.dir;
+      final region = _regionById(activeId);
+      if (region != null) {
+        _mapCenter =
+            Geographic(lon: region.bbox.center.lng, lat: region.bbox.center.lat);
+      }
+
+      final ready = await _tiles.ensureReady(pmtilesPath: files.tiles);
       if (!mounted) return;
       final os = PlatformDispatcher.instance.platformBrightness;
       final active = MapStyleResolver.resolve(os, _manualStyle);
@@ -126,10 +176,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _styleUrl = ready.styleUrlFor(active);
         _bootError = null;
       });
-      // Open the offline search DB (non-fatal if it fails — search just shows
-      // an error to the user rather than crashing the map).
-      SearchService.open().then((s) {
-        if (mounted) _search = s;
+      // Open the active region's search DB (non-fatal if it fails — search just
+      // shows an error to the user rather than crashing the map).
+      SearchService.openForRegion(files.search).then((s) {
+        if (mounted) {
+          _search?.dispose();
+          _search = s;
+        }
       }).catchError((Object e) {
         debugPrint('Search open failed: $e');
       });
@@ -169,6 +222,72 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _boot();
   }
 
+  /// The region controller changed (a download finished, active switched, …).
+  void _onRegionsChanged() {
+    if (!mounted) return;
+    final newActive = _regions?.activeRegionId;
+    if (newActive != null && newActive != _activeRegionId) {
+      _activeRegionId = newActive;
+      _switchRegion(newActive);
+    }
+    setState(() {});
+  }
+
+  /// Re-point the map/router/search at [regionId] after the active region
+  /// switches. Bundled vs downloaded is invisible here — both resolve to a
+  /// directory of files via [RegionStore].
+  Future<void> _switchRegion(String regionId) async {
+    final store = _store;
+    if (store == null) return;
+    final files = store.filesFor(regionId);
+    _routing.regionDir = files.dir;
+    _plan = null; // the old route belonged to the old region
+    try {
+      final s = await SearchService.openForRegion(files.search);
+      if (!mounted) return;
+      _search?.dispose();
+      _search = s;
+    } catch (e) {
+      debugPrint('Region search reopen failed: $e');
+    }
+    try {
+      final ready = await _tiles.restartForRegion(files.tiles);
+      if (!mounted) return;
+      _ready = ready;
+      _pointerReady = false;
+      _pointerSourceReady = false;
+      _destReady = false;
+      _routeReady = false;
+      _controller?.setStyle(ready.styleUrlFor(_activeStyle));
+    } catch (e) {
+      debugPrint('Region tile restart failed: $e');
+    }
+    final region = _regionById(regionId);
+    if (region != null) {
+      setState(() => _follow = false);
+      _controller?.animateCamera(
+        center:
+            Geographic(lon: region.bbox.center.lng, lat: region.bbox.center.lat),
+        zoom: 11,
+      );
+    }
+  }
+
+  Region? _regionById(String id) {
+    for (final r in _regions?.installed ?? const <Region>[]) {
+      if (r.id == id) return r;
+    }
+    return null;
+  }
+
+  void _openSettings() {
+    final controller = _regions;
+    if (controller == null) return; // not booted yet (e.g. tests)
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SettingsScreen(regions: controller)),
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -178,6 +297,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _tiles.dispose();
     _nav.dispose();
     _heading?.dispose();
+    _regions?.removeListener(_onRegionsChanged);
+    _regions?.dispose();
+    _http?.close();
     super.dispose();
   }
 
@@ -609,7 +731,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             MapLibreMap(
               options: MapOptions(
                 initStyle: _styleUrl!,
-                initCenter: _center,
+                initCenter: _mapCenter,
                 initZoom: 14,
                 initPitch: _tilted ? 50 : 0,
                 initBearing: 0,
@@ -655,6 +777,19 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               child: const Icon(Icons.search),
             ),
           ),
+          // Settings FAB — opens the region download manager. Hidden in drive
+          // mode to keep the screen clean.
+          if (_nav.state != NavState.navigating)
+            Positioned(
+              left: 12,
+              top: 100,
+              child: FloatingActionButton.small(
+                key: const Key('settingsButton'),
+                heroTag: 'settings',
+                onPressed: _openSettings,
+                child: const Icon(Icons.settings),
+              ),
+            ),
           // Destination info card — shown when a search result is active.
           if (_destination != null)
             Positioned(
