@@ -10,21 +10,19 @@ import java.io.File
 /**
  * MethodChannel bridge to the native Valhalla engine (valhalla-mobile).
  *
- * ensureReady: copies the bundled tiles tar + admins.sqlite from Flutter assets
- * into app files storage (once, version-stamped), writes a valhalla.json whose
- * mjolnir paths point at that storage, and constructs a ValhallaActor.
- * route: forwards a Valhalla request JSON string to ValhallaActor.route().
+ * Region-aware: each call carries an optional `regionDir` (the active region's
+ * directory, holding `valhalla_tiles.tar` + `admins.sqlite`). The plugin writes a
+ * `valhalla.json` into that dir (paths rewritten to it) and caches one
+ * `ValhallaActor` per dir, so switching regions just builds/reuses another actor.
+ * A null `regionDir` uses a legacy dir seeded from the bundled assets.
  */
 class ValhallaPlugin(private val context: Context) {
     companion object {
         const val CHANNEL = "offline_navigator/valhalla"
-        // Bump when bundled tiles change OR the native engine changes so the
-        // on-device storage (and the actor) start fresh. Bumped to "2" with the
-        // valhalla-mobile 0.1.0 -> 0.3.0 engine upgrade.
-        const val VERSION = "2"
     }
 
-    private var actor: ValhallaActor? = null
+    // One actor per routing directory, keyed by absolute path.
+    private val actors = HashMap<String, ValhallaActor>()
 
     fun register(engine: FlutterEngine) {
         MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
@@ -36,7 +34,8 @@ class ValhallaPlugin(private val context: Context) {
                     // Error, not an Exception — without this it would crash the app
                     // instead of surfacing a readable reason on the trip panel.
                     "ensureReady" -> try {
-                        ensureReady(); result.success(null)
+                        actorFor(call.argument<String>("regionDir"))
+                        result.success(null)
                     } catch (e: Throwable) {
                         result.error("ENSURE_FAILED", describe(e), stackOf(e))
                     }
@@ -44,7 +43,8 @@ class ValhallaPlugin(private val context: Context) {
                         val req = call.argument<String>("request")
                             ?: return@setMethodCallHandler result.error(
                                 "BAD_ARGS", "missing request", null)
-                        result.success(route(req))
+                        val actor = actorFor(call.argument<String>("regionDir"))
+                        result.success(actor.route(req))
                     } catch (e: Throwable) {
                         result.error("ROUTE_FAILED", describe(e), stackOf(e))
                     }
@@ -53,8 +53,44 @@ class ValhallaPlugin(private val context: Context) {
             }
     }
 
-    private fun routingDir(): File =
+    /**
+     * Construct + cache (once) the actor for a routing directory. [regionDir] =
+     * the active region's dir (already holding `valhalla_tiles.tar` +
+     * `admins.sqlite`); null = a legacy dir seeded from bundled assets on first
+     * use. A `valhalla.json` is (re)written so its `__APPDIR__` paths resolve
+     * inside the chosen dir.
+     */
+    private fun actorFor(regionDir: String?): ValhallaActor {
+        val dir = if (regionDir != null) File(regionDir) else legacyDir()
+        actors[dir.absolutePath]?.let { return it }
+        prepareDir(dir, isLegacy = regionDir == null)
+        return ValhallaActor(File(dir, "valhalla.json").absolutePath).also {
+            actors[dir.absolutePath] = it
+        }
+    }
+
+    private fun legacyDir(): File =
         File(context.filesDir, "routing").apply { mkdirs() }
+
+    /**
+     * Ensure [dir] has the routing tiles + admins + a `valhalla.json`. A region
+     * dir already holds the tiles/admins (downloaded or seeded by the region
+     * store); the legacy dir is seeded from the bundled assets. The config is
+     * always (re)written so its paths point at [dir].
+     */
+    private fun prepareDir(dir: File, isLegacy: Boolean) {
+        dir.mkdirs()
+        if (isLegacy) {
+            val tar = File(dir, "valhalla_tiles.tar")
+            if (!tar.exists()) copyAsset(assetPath("valhalla_tiles.tar"), tar)
+            val admins = File(dir, "admins.sqlite")
+            if (!admins.exists()) copyAsset(assetPath("admins.sqlite"), admins)
+        }
+        val template = context.assets.open(assetPath("valhalla.json"))
+            .bufferedReader().use { it.readText() }
+        File(dir, "valhalla.json")
+            .writeText(template.replace("__APPDIR__", dir.absolutePath))
+    }
 
     /**
      * A readable one-line reason that names the throwable type (and its cause
@@ -73,24 +109,6 @@ class ValhallaPlugin(private val context: Context) {
 
     private fun stackOf(e: Throwable): String = Log.getStackTraceString(e)
 
-    private fun ensureReady() {
-        if (actor != null) return
-        val dir = routingDir()
-        val stamp = File(dir, ".version")
-        val fresh = !stamp.exists() || stamp.readText().trim() != VERSION
-        if (fresh) {
-            copyAsset(assetPath("valhalla_tiles.tar"), File(dir, "valhalla_tiles.tar"))
-            copyAsset(assetPath("admins.sqlite"), File(dir, "admins.sqlite"))
-            // Read the bundled config template and rewrite __APPDIR__.
-            val template = context.assets.open(assetPath("valhalla.json"))
-                .bufferedReader().use { it.readText() }
-            val config = template.replace("__APPDIR__", dir.absolutePath)
-            File(dir, "valhalla.json").writeText(config)
-            stamp.writeText(VERSION)
-        }
-        actor = ValhallaActor(File(dir, "valhalla.json").absolutePath)
-    }
-
     /**
      * Flutter bundles assets under `flutter_assets/` in the Android asset
      * namespace, so a `pubspec.yaml` asset at `assets/routing/x` is opened via
@@ -98,11 +116,6 @@ class ValhallaPlugin(private val context: Context) {
      */
     private fun assetPath(name: String): String =
         "flutter_assets/assets/routing/$name"
-
-    private fun route(request: String): String {
-        ensureReady()
-        return actor!!.route(request)
-    }
 
     private fun copyAsset(assetPath: String, dest: File) {
         context.assets.open(assetPath).use { input ->

@@ -14,20 +14,36 @@ import 'package:offline_navigator/routing/valhalla_request.dart';
 /// failures transparently degrade to straight-line routing so the app stays
 /// usable while debugging the native integration.
 class ValhallaRoutingService implements RoutingService {
-  ValhallaRoutingService({this.fallbackToFake = true});
+  ValhallaRoutingService({this.fallbackToFake = true, this.regionDir});
 
   final bool fallbackToFake;
+
+  /// Directory of the active region's routing files (`valhalla_tiles.tar` +
+  /// `admins.sqlite`); the native side writes a `valhalla.json` there and caches
+  /// an actor per dir. Null routes over the legacy bundled tiles in app files
+  /// storage. Mutable so switching the active region doesn't require a new
+  /// service instance (re-`ensureReady`s on change).
+  String? regionDir;
+
   static const _channel = MethodChannel('offline_navigator/valhalla');
   final _fake = FakeRoutingService();
 
   bool _ready = false;
+  String? _readyDir;
+
+  /// Channel args: [extra] merged with `regionDir` when one is set.
+  Map<String, Object?> _args([Map<String, Object?> extra = const {}]) => {
+        ...extra,
+        if (regionDir != null) 'regionDir': regionDir,
+      };
 
   @override
   Future<void> ensureReady() async {
-    if (_ready) return;
+    if (_ready && _readyDir == regionDir) return;
     try {
-      await _channel.invokeMethod<void>('ensureReady');
+      await _channel.invokeMethod<void>('ensureReady', _args());
       _ready = true;
+      _readyDir = regionDir;
     } on PlatformException catch (e) {
       if (fallbackToFake) return; // fake needs no setup
       throw RoutingException('Routing engine unavailable: ${e.message}');
@@ -43,7 +59,8 @@ class ValhallaRoutingService implements RoutingService {
     try {
       await ensureReady();
       final req = buildValhallaRequest(points, mode);
-      final res = await _channel.invokeMethod<String>('route', {'request': req});
+      final res =
+          await _channel.invokeMethod<String>('route', _args({'request': req}));
       if (res == null) throw const RoutingException('Empty routing response');
       responseJson = res;
     } on PlatformException catch (e) {

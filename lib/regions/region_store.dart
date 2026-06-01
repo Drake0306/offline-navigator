@@ -9,7 +9,9 @@ class RegionFiles {
   const RegionFiles(this.dir);
   final String dir;
   String get tiles => p.join(dir, 'tiles.pmtiles');
-  String get valhalla => p.join(dir, 'valhalla.tar');
+  // Named to match the bundled valhalla.json template's `tile_extract` path so
+  // the native router's config points at the right file in any region dir.
+  String get valhalla => p.join(dir, 'valhalla_tiles.tar');
   String get admins => p.join(dir, 'admins.sqlite');
   String get config => p.join(dir, 'valhalla.json'); // generated on-device, not downloaded
   String get search => p.join(dir, 'search.sqlite');

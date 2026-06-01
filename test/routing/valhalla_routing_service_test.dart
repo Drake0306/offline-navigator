@@ -32,6 +32,23 @@ void main() {
     expect(plan.geometry, isNotEmpty);
   });
 
+  test('forwards regionDir to the native channel when set', () async {
+    final seen = <String, String?>{};
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      final args = call.arguments;
+      seen[call.method] =
+          args is Map ? args['regionDir'] as String? : null;
+      if (call.method == 'ensureReady') return null;
+      if (call.method == 'route') return okResponse;
+      return null;
+    });
+    final svc = ValhallaRoutingService()..regionDir = '/data/regions/east';
+    await svc.route(
+        const [LatLng(22.586, 86.476), LatLng(22.593, 86.515)], TravelMode.car);
+    expect(seen['ensureReady'], '/data/regions/east');
+    expect(seen['route'], '/data/regions/east');
+  });
+
   test('route() maps a Valhalla {code,message} error to RoutingException',
       () async {
     messenger.setMockMethodCallHandler(channel, (call) async {

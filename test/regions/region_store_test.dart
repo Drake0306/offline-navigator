@@ -46,7 +46,7 @@ void main() {
   test('filesFor returns the five region paths', () {
     final f = store.filesFor('r1');
     expect(f.tiles, endsWith(p.join('regions', 'r1', 'tiles.pmtiles')));
-    expect(f.valhalla, endsWith('valhalla.tar'));
+    expect(f.valhalla, endsWith('valhalla_tiles.tar'));
     expect(f.admins, endsWith('admins.sqlite'));
     expect(f.config, endsWith('valhalla.json'));
     expect(f.search, endsWith('search.sqlite'));
