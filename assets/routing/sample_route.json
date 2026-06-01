@@ -1,0 +1,24 @@
+{
+  "trip": {
+    "legs": [
+      {
+        "summary": { "length": 1.2, "time": 180 },
+        "shape": "_izlhA~rlgdF_{geC~ywl@_kwzCn`{nI",
+        "maneuvers": [
+          { "type": 1, "instruction": "Head north.", "length": 0.6, "time": 90, "begin_shape_index": 0, "end_shape_index": 1 },
+          { "type": 15, "instruction": "Turn left.", "length": 0.6, "time": 90, "begin_shape_index": 1, "end_shape_index": 2 }
+        ]
+      },
+      {
+        "summary": { "length": 0.8, "time": 120 },
+        "shape": "_izlhA~rlgdF_{geC~ywl@_kwzCn`{nI",
+        "maneuvers": [
+          { "type": 8, "instruction": "Continue.", "length": 0.8, "time": 120, "begin_shape_index": 0, "end_shape_index": 1 },
+          { "type": 4, "instruction": "You have arrived.", "length": 0, "time": 0, "begin_shape_index": 1, "end_shape_index": 1 }
+        ]
+      }
+    ],
+    "summary": { "length": 2.0, "time": 300 },
+    "units": "kilometers"
+  }
+}
