@@ -19,8 +19,9 @@ android {
         applicationId = "com.talentbridge.offline_navigator"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // valhalla-mobile requires minSdk >= 21; override flutter.minSdkVersion if lower.
-        minSdk = maxOf(flutter.minSdkVersion, 21)
+        // valhalla-mobile (0.1.0) declares minSdk 26, so the app floor must be
+        // >= 26 or the manifest merge fails. Keep Flutter's value if it's higher.
+        minSdk = maxOf(flutter.minSdkVersion, 26)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
