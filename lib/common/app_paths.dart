@@ -10,7 +10,6 @@ class AppPaths {
   final String root;
 
   String get tilesPath => p.join(root, 'tiles', 'ghatshila.pmtiles');
-  String get stylePath => p.join(root, 'style', 'style.json');
   String get glyphsDir => p.join(root, 'glyphs');
   String get _stampPath => p.join(root, '.asset_version');
 

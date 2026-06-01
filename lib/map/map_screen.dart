@@ -32,7 +32,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   String? _styleUrl;
   String? _bootError;
   UserLocation? _lastLoc;
+  // Re-entry guard for _setupPointer (set at the START of setup so a second
+  // onStyleLoaded doesn't double-add). Distinct from _pointerSourceReady.
   bool _pointerReady = false;
+  // True only AFTER the pointer source+layer are actually added, and false
+  // again across a style swap until they're re-added. Gates _onLocation's
+  // source update so we never touch a source that doesn't exist yet.
+  bool _pointerSourceReady = false;
   bool _tilted = false;
   MapReady? _ready;
   MapStyleId? _manualStyle; // null = follow OS brightness (Auto)
@@ -137,7 +143,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (ready == null || controller == null) return;
     if (id == _activeStyle) return;
     setState(() => _activeStyle = id);
-    _pointerReady = false; // setStyle clears added layers; allow re-add
+    // setStyle clears added layers/sources: allow re-add and stop touching
+    // the (now-destroyed) source until the new style reloads it.
+    _pointerReady = false;
+    _pointerSourceReady = false;
     controller.setStyle(ready.styleUrlFor(id));
   }
 
@@ -209,10 +218,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           },
         ),
       );
+      // Source + layer now exist: safe for _onLocation to update them.
+      _pointerSourceReady = true;
+      // Push the last known fix immediately so the pointer appears at the
+      // right place after a style swap without waiting for the next GPS tick.
+      final last = _lastLoc;
+      if (last != null) {
+        style.updateGeoJsonSource(
+          id: UserPointer.sourceId,
+          data: UserPointer.featureJson(last),
+        );
+      }
     } catch (e) {
       // Pointer layer setup failed (e.g. duplicate ids on a style reload).
       // Allow a later attempt and keep the basemap usable rather than crashing.
       _pointerReady = false;
+      _pointerSourceReady = false;
       debugPrint('Pointer setup failed: $e');
       return;
     }
@@ -220,13 +241,20 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   void _onLocation(UserLocation loc) {
     _lastLoc = loc;
+    // Only update the pointer source once it actually exists. The
+    // `user-location` source is added asynchronously by _setupPointer and is
+    // destroyed across a style swap (setStyle clears runtime sources/layers)
+    // until the new style reloads. `_pointerReady` tracks exactly that window.
+    // Android's updateGeoJsonSource no-ops on a missing source, but iOS
+    // force-unwraps and throws — so this guard is required, not just tidy.
     final style = _style;
-    if (style == null) return;
-    // Update the GeoJSON source with new position and heading.
-    style.updateGeoJsonSource(
-      id: UserPointer.sourceId,
-      data: UserPointer.featureJson(loc),
-    );
+    if (style != null && _pointerSourceReady) {
+      style.updateGeoJsonSource(
+        id: UserPointer.sourceId,
+        data: UserPointer.featureJson(loc),
+      );
+    }
+    // The follow camera should track the user regardless of pointer readiness.
     if (_follow) {
       _controller?.animateCamera(
         center: Geographic(lon: loc.lng, lat: loc.lat),

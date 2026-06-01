@@ -55,9 +55,11 @@ const profiles = <StyleProfile>[
   ),
   StyleProfile(
     id: 'roads',
-    background: '#eef1f5', earth: '#e7ebf0', landuse: '#000000',
+    // landuse/building are not drawn (showLanduse/showBuildings false) but
+    // carry sane muted values so flipping those flags on doesn't render black.
+    background: '#eef1f5', earth: '#e7ebf0', landuse: '#e7ebf0',
     water: '#b9d3e6', roadCasing: '#9aa3b0', road: '#ffffff',
-    building: '#000000', text: '#2a2f36', halo: '#ffffff',
+    building: '#dfe3e9', text: '#2a2f36', halo: '#ffffff',
     showLanduse: false, showBuildings: false, showLabels: true, roadScale: 1.6,
   ),
 ];

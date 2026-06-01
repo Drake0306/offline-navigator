@@ -12,14 +12,14 @@ const String kAssetVersion = '1';
 /// The font stack folder name shipped under assets/glyphs/ (must match Task 3).
 const String kFontStack = 'Noto Sans Regular';
 
-/// Returned by [TileService.ensureReady]. Carries the server base origin and
-/// the running server. Build a per-style URL with [styleUrlFor].
+/// Returned by [TileService.ensureReady]. Carries the local server base
+/// origin; build a per-style URL with [styleUrlFor]. The server itself is
+/// owned and stopped by [TileService] (via [TileService.dispose]).
 class MapReady {
-  MapReady(this.base, [this.server]);
+  MapReady(this.base);
 
   /// The server origin, e.g. `http://127.0.0.1:54321`.
   final String base;
-  final LocalTileServer? server;
 
   String styleUrlFor(MapStyleId id) => '$base${id.route}';
 
@@ -69,7 +69,7 @@ class TileService {
     server.updateStyles(styles);
 
     _server = server;
-    return MapReady(base, server);
+    return MapReady(base);
   }
 
   Future<void> dispose() async {

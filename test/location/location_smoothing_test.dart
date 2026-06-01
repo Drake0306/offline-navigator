@@ -17,4 +17,17 @@ void main() {
     // Halfway from 350 to 10 (going forward through 0) is 0, not 180.
     expect(s.headingDeg, closeTo(0, 1e-6));
   });
+
+  test('exact 180-degree flip resolves to a single deterministic direction', () {
+    // The degenerate antipodal case has no "shortest" path; the implementation
+    // sweeps counter-clockwise (0 -> 180 goes via 270). This locks that the
+    // result is always a valid normalized angle in [0, 360) and is stable,
+    // never NaN/garbage. EMA smoothing makes the chosen direction imperceptible.
+    final a = UserLocation(lat: 0, lng: 0, headingDeg: 0, speedMps: 0, accuracyM: 5, timestamp: DateTime(2026));
+    final b = UserLocation(lat: 0, lng: 0, headingDeg: 180, speedMps: 0, accuracyM: 5, timestamp: DateTime(2026));
+    final s = a.smoothedTowards(b, 0.5);
+    expect(s.headingDeg, closeTo(270, 1e-6));
+    expect(s.headingDeg, greaterThanOrEqualTo(0));
+    expect(s.headingDeg, lessThan(360));
+  });
 }
