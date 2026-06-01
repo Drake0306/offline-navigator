@@ -76,36 +76,44 @@ No commit (environment only).
 
 ---
 
-## Task 1: Build the Ghatshila search index
+## Task 1: Build the Ghatshila search index (raw OSM via Overpass)
 
 **Files:**
-- Create: `tool/extract_features.py`
+- Create: `tool/build_search_index.py`
 - Create: `tool/generate_search_index.sh`
 - Create (output, committed): `assets/search/ghatshila.sqlite`
 - Modify: `pubspec.yaml` (register `assets/search/`)
 
-- [ ] **Step 1: Write the pyosmium extractor**
+**Why Overpass, not Geofabrik:** Geofabrik no longer publishes a per-state Jharkhand `.osm.pbf`
+(only the 1.6 GB India extract). The **Overpass API** returns RAW OpenStreetMap for *just our bbox*
+as JSON — small, fast, no giant download, and it is the user's chosen "dedicated index from raw OSM"
+approach (NOT extracting from the rendered vector tiles). It also keeps the roads path real. Confirmed
+during planning: Overpass for this bbox returns ~110+ named features; Ghatshila is present. NOTE:
+OSM has **zero named highways** in this rural bbox today, so the `road` count will legitimately be 0
+— that is correct data, not a bug (verified via an Overpass `way[highway][name]` query). The road
+extraction code stays in so other regions / future data work.
 
-Create `tool/extract_features.py`:
+- [ ] **Step 1: Write the Overpass→SQLite builder**
+
+Create `tool/build_search_index.py`:
 ```python
 #!/usr/bin/env python3
-"""Extract named features (places/POIs/roads/water) from an OSM .pbf within a
-bbox into a SQLite DB with a normalized, indexed `search` column.
+"""Build assets/search/ghatshila.sqlite from RAW OpenStreetMap (Overpass API)
+within the Ghatshila bbox. Output: a `features` table with a normalized,
+indexed `search` column queried by the app with LIKE (no FTS5).
 
-Usage: python3 tool/extract_features.py <input.osm.pbf> <output.sqlite>
+Usage: python3 tool/build_search_index.py <overpass.json> <output.sqlite>
+The <overpass.json> is produced by tool/generate_search_index.sh.
 """
-import sys, sqlite3, unicodedata, re
-import osmium
+import sys, json, sqlite3, unicodedata, re
 
-# OSM tag → our coarse `kind`. We keep only features that have a name.
 def classify(tags):
     if 'place' in tags:
         return 'place'
     if 'highway' in tags and tags.get('highway') not in ('footway', 'path', 'steps'):
         return 'road'
-    if tags.get('natural') in ('water',) or 'water' in tags or tags.get('waterway'):
+    if tags.get('natural') == 'water' or 'water' in tags or tags.get('waterway'):
         return 'water'
-    # POIs: a broad set of "has a useful name" amenity-like tags.
     for k in ('amenity', 'shop', 'tourism', 'leisure', 'office', 'healthcare',
               'aeroway', 'railway', 'public_transport'):
         if k in tags:
@@ -121,58 +129,35 @@ def normalize(s):
     s = re.sub(r'\s+', ' ', s).strip()
     return s
 
-class Handler(osmium.SimpleHandler):
-    def __init__(self, rows):
-        super().__init__()
-        self.rows = rows
-
-    def _add(self, tags, lat, lon):
-        name = tags.get('name')
-        if not name or lat is None or lon is None:
-            return
-        kind = classify(tags)
-        if kind is None:
-            return
-        name_en = tags.get('name:en', '')
-        search = (normalize(name) + ' ' + normalize(name_en)).strip()
-        self.rows.append((name, name_en, kind, lat, lon, search))
-
-    def node(self, n):
-        if n.location.valid():
-            self._add(dict(n.tags), n.location.lat, n.location.lon)
-
-    def area(self, a):
-        # Centroid for named areas (buildings/water/landuse polygons with names).
-        try:
-            # osmium provides envelope; use its center as a cheap representative point.
-            env = a.envelope()
-            lat = (env.bottom_left.lat + env.top_right.lat) / 2
-            lon = (env.bottom_left.lon + env.top_right.lon) / 2
-        except Exception:
-            return
-        self._add(dict(a.tags), lat, lon)
-
-    def way(self, w):
-        # Named roads: take the midpoint node of the way if locations are present.
-        if 'name' not in w.tags:
-            return
-        try:
-            nodes = [nd.location for nd in w.nodes if nd.location.valid()]
-            if not nodes:
-                return
-            mid = nodes[len(nodes) // 2]
-            self._add(dict(w.tags), mid.lat, mid.lon)
-        except Exception:
-            return
+def coords(el):
+    # Nodes carry lat/lon directly; ways/relations carry a 'center' (out center).
+    if 'lat' in el and 'lon' in el:
+        return el['lat'], el['lon']
+    c = el.get('center')
+    if c:
+        return c['lat'], c['lon']
+    return None, None
 
 def main():
     src, out = sys.argv[1], sys.argv[2]
+    data = json.load(open(src, encoding='utf-8'))
     rows = []
-    # locations=True so ways/areas have node coordinates.
-    Handler(rows).apply_file(src, locations=True)
-    # Dedupe identical (name,kind,rounded-coord) rows.
-    seen = set()
-    deduped = []
+    for el in data.get('elements', []):
+        tags = el.get('tags') or {}
+        name = tags.get('name')
+        if not name:
+            continue
+        kind = classify(tags)
+        if kind is None:
+            continue
+        lat, lon = coords(el)
+        if lat is None or lon is None:
+            continue
+        name_en = tags.get('name:en', '')
+        search = (normalize(name) + ' ' + normalize(name_en)).strip()
+        rows.append((name, name_en, kind, float(lat), float(lon), search))
+    # Dedupe on (normalized-search, kind, rounded coord).
+    seen, deduped = set(), []
     for r in rows:
         key = (r[5], r[2], round(r[3], 5), round(r[4], 5))
         if key in seen:
@@ -197,42 +182,54 @@ def main():
 if __name__ == '__main__':
     main()
 ```
+(Pure stdlib — no `pyosmium`, no PMTiles parsing. The build needs only Python 3 + `curl` + `sqlite3`.)
 
 - [ ] **Step 2: Write the orchestration script**
 
 Create `tool/generate_search_index.sh`:
 ```bash
 #!/usr/bin/env bash
-# Build assets/search/ghatshila.sqlite from a Jharkhand OSM extract clipped to
-# the Ghatshila bbox. Requires: osmium (brew install osmium-tool),
-# pyosmium (pip install osmium), python3.
+# Build assets/search/ghatshila.sqlite from RAW OpenStreetMap via the Overpass
+# API, scoped to the Ghatshila bbox. Requires: curl, python3, sqlite3.
 #
 # Usage: tool/generate_search_index.sh
 set -euo pipefail
 
-BBOX="86.35,22.45,86.65,22.75"   # lon_min,lat_min,lon_max,lat_max — matches the tile pack
+# Overpass bbox order is (south,west,north,east).
+S=22.45; W=86.35; N=22.75; E=86.65
 WORK="$(mktemp -d)"
-SRC_URL="https://download.geofabrik.de/asia/india/jharkhand-latest.osm.pbf"
-RAW="$WORK/jharkhand.osm.pbf"
-CLIP="$WORK/ghatshila.osm.pbf"
+RAW="$WORK/overpass.json"
 OUT="assets/search/ghatshila.sqlite"
+ENDPOINT="https://overpass-api.de/api/interpreter"
+
+read -r -d '' QUERY <<OQL || true
+[out:json][timeout:120];
+(
+  node["name"](${S},${W},${N},${E});
+  way["name"](${S},${W},${N},${E});
+  relation["name"](${S},${W},${N},${E});
+);
+out tags center 5000;
+OQL
 
 mkdir -p assets/search
-echo "Downloading Jharkhand extract..."
-curl -fL "$SRC_URL" -o "$RAW"
-echo "Clipping to bbox $BBOX ..."
-osmium extract --bbox "$BBOX" --set-bounds -o "$CLIP" "$RAW"
-echo "Extracting named features into $OUT ..."
-python3 tool/extract_features.py "$CLIP" "$OUT"
+echo "Querying Overpass for named features in (${S},${W},${N},${E}) ..."
+curl -fsS --max-time 180 -A "offline-navigator-build/1.0 (offline search index)" \
+  -X POST "$ENDPOINT" --data-urlencode "data=${QUERY}" -o "$RAW"
+echo "Building $OUT ..."
+python3 tool/build_search_index.py "$RAW" "$OUT"
 rm -rf "$WORK"
-echo "Done. Feature count:"
+echo "Per-kind counts:"
 sqlite3 "$OUT" "SELECT kind, count(*) FROM features GROUP BY kind;"
 ```
 
 - [ ] **Step 3: Run it**
 
 Run: `chmod +x tool/generate_search_index.sh && tool/generate_search_index.sh`
-Expected: downloads the pbf, clips, and prints a per-kind feature count (place/poi/road/water) and a total > 0. `assets/search/ghatshila.sqlite` exists (a few hundred KB to a few MB). If Geofabrik's URL/path changed, update `SRC_URL` to the current Jharkhand extract URL and rerun.
+Expected: prints per-kind counts with a total > 0 (≈100–250 features; `place` + `poi` + `water`,
+`road` likely 0 for this rural bbox — that is fine and expected). `assets/search/ghatshila.sqlite`
+exists and is small (tens of KB). If Overpass returns a 429/504 (rate limit/timeout), wait a minute
+and re-run, or switch `ENDPOINT` to a mirror like `https://overpass.kumi.systems/api/interpreter`.
 
 - [ ] **Step 4: Sanity-check the DB**
 
@@ -240,18 +237,23 @@ Run:
 ```bash
 sqlite3 assets/search/ghatshila.sqlite \
   "SELECT name, kind, round(lat,4), round(lon,4) FROM features WHERE search LIKE 'ghat%' LIMIT 5;"
+sqlite3 assets/search/ghatshila.sqlite "SELECT count(*) FROM features;"
 ```
-Expected: returns Ghatshila (and similar) rows — confirms the normalized `search` column + `LIKE` works and the area is covered. If zero rows for `ghat%`, widen the check (`LIKE '%ghat%'`) and confirm the bbox actually contains Ghatshila.
+Expected: returns Ghatshila rows at ~22.58/86.47, and a total feature count > 0. This confirms the
+normalized `search` column + `LIKE` works and the bbox covers Ghatshila. If `ghat%` is empty,
+something is wrong with the bbox/Overpass response — debug before committing (inspect the raw JSON).
 
 - [ ] **Step 5: Register the asset**
 
-In `pubspec.yaml`, under `flutter: assets:`, add `- assets/search/`. Run `flutter pub get` → clean resolve.
+In `pubspec.yaml`, under `flutter: assets:`, add `- assets/search/`. Run `flutter pub get` → clean
+resolve. Confirm `flutter analyze` is still clean and `flutter test` still passes (28 tests) — this
+task only adds build tooling + an asset, so nothing Dart should change.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tool/extract_features.py tool/generate_search_index.sh assets/search/ghatshila.sqlite pubspec.yaml
-git commit -m "feat: build bundled Ghatshila offline search index (osmium + pyosmium → sqlite)"
+git add tool/build_search_index.py tool/generate_search_index.sh assets/search/ghatshila.sqlite pubspec.yaml
+git commit -m "feat: build bundled Ghatshila offline search index (raw OSM via Overpass → sqlite)"
 ```
 
 ---
