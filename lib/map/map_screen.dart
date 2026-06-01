@@ -7,9 +7,13 @@ import 'package:geolocator/geolocator.dart';
 import 'package:maplibre/maplibre.dart';
 import 'package:offline_navigator/location/location_service.dart';
 import 'package:offline_navigator/location/user_location.dart';
+import 'package:offline_navigator/map/destination_marker.dart';
 import 'package:offline_navigator/map/map_style.dart';
 import 'package:offline_navigator/map/style_sheet.dart';
 import 'package:offline_navigator/map/user_pointer.dart';
+import 'package:offline_navigator/search/search_result.dart';
+import 'package:offline_navigator/search/search_screen.dart';
+import 'package:offline_navigator/search/search_service.dart';
 import 'package:offline_navigator/tiles/tile_service.dart';
 
 class MapScreen extends StatefulWidget {
@@ -28,6 +32,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final _location = LocationService();
   MapController? _controller;
   StyleController? _style;
+  SearchService? _search;
+  SearchResult? _destination;
   StreamSubscription<UserLocation>? _locSub;
   String? _styleUrl;
   String? _bootError;
@@ -39,6 +45,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // again across a style swap until they're re-added. Gates _onLocation's
   // source update so we never touch a source that doesn't exist yet.
   bool _pointerSourceReady = false;
+  // True only AFTER the destination source+layer are added. Reset to false on
+  // a style swap (setStyle clears them) until _setupPointer re-adds them.
+  // Guards every updateGeoJsonSource(destination...) call — same pattern as
+  // _pointerSourceReady to prevent the iOS missing-source crash.
+  bool _destReady = false;
   bool _tilted = false;
   MapReady? _ready;
   MapStyleId? _manualStyle; // null = follow OS brightness (Auto)
@@ -79,6 +90,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _activeStyle = active;
         _styleUrl = ready.styleUrlFor(active);
         _bootError = null;
+      });
+      // Open the offline search DB (non-fatal if it fails — search just shows
+      // an error to the user rather than crashing the map).
+      SearchService.open().then((s) {
+        if (mounted) _search = s;
+      }).catchError((Object e) {
+        debugPrint('Search open failed: $e');
       });
     } catch (e) {
       // Asset copy / disk full / port bind / corrupt tile pack — surface a
@@ -121,6 +139,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _locSub?.cancel();
     _location.dispose();
+    _search?.dispose();
     _tiles.dispose();
     super.dispose();
   }
@@ -144,9 +163,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (id == _activeStyle) return;
     setState(() => _activeStyle = id);
     // setStyle clears added layers/sources: allow re-add and stop touching
-    // the (now-destroyed) source until the new style reloads it.
+    // the (now-destroyed) sources until the new style reloads them.
     _pointerReady = false;
     _pointerSourceReady = false;
+    _destReady = false;
     controller.setStyle(ready.styleUrlFor(id));
   }
 
@@ -229,11 +249,50 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           data: UserPointer.featureJson(last),
         );
       }
+
+      // 4. Destination marker (for search results) — empty until a result is
+      //    picked. Reuses the same arrow PNG at a slightly smaller size.
+      //    Must be added here (inside the try, same onStyleLoaded scope) so
+      //    it is re-created after every style swap, guarded by _destReady.
+      await style.addImage(
+        'destination-pin-icon',
+        (await rootBundle.load('assets/icons/pointer_arrow.png'))
+            .buffer
+            .asUint8List(),
+      );
+      await style.addSource(
+        GeoJsonSource(
+          id: DestinationMarker.sourceId,
+          data: DestinationMarker.emptyJson(),
+        ),
+      );
+      await style.addLayer(
+        SymbolStyleLayer(
+          id: DestinationMarker.layerId,
+          sourceId: DestinationMarker.sourceId,
+          layout: {
+            'icon-image': 'destination-pin-icon',
+            'icon-size': 0.6,
+            'icon-allow-overlap': true,
+          },
+        ),
+      );
+      // Destination source + layer now exist.
+      _destReady = true;
+      // Re-show an existing destination after a style swap.
+      final dest = _destination;
+      if (dest != null) {
+        style.updateGeoJsonSource(
+          id: DestinationMarker.sourceId,
+          data: DestinationMarker.featureJson(dest.lat, dest.lng),
+        );
+      }
     } catch (e) {
-      // Pointer layer setup failed (e.g. duplicate ids on a style reload).
-      // Allow a later attempt and keep the basemap usable rather than crashing.
+      // Pointer/destination layer setup failed (e.g. duplicate ids on a style
+      // reload). Allow a later attempt; keep the basemap usable not crashing.
       _pointerReady = false;
       _pointerSourceReady = false;
+      _destReady = false;
       debugPrint('Pointer setup failed: $e');
       return;
     }
@@ -325,6 +384,35 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void showBootErrorForTest(String message) =>
       setState(() => _bootError = message);
 
+  Future<void> _openSearch() async {
+    final search = _search;
+    if (search == null) return; // DB not ready yet
+    final origin = _lastLoc;
+    final lat = origin?.lat ?? _center.lat;
+    final lng = origin?.lng ?? _center.lon;
+    final result = await Navigator.of(context).push<SearchResult>(
+      MaterialPageRoute(
+        builder: (_) => SearchScreen(
+          querier: search,
+          originLat: lat,
+          originLng: lng,
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() => _destination = result);
+    _controller?.animateCamera(
+      center: Geographic(lon: result.lng, lat: result.lat),
+      zoom: 16,
+    );
+    if (_destReady) {
+      _style?.updateGeoJsonSource(
+        id: DestinationMarker.sourceId,
+        data: DestinationMarker.featureJson(result.lat, result.lng),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -356,6 +444,44 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           // OSM/ODbL attribution — required when displaying OpenStreetMap data.
           if (_styleUrl != null)
             const Positioned(left: 8, bottom: 6, child: _Attribution()),
+          // Search FAB — top-left, away from the right-side control column.
+          // Renders unconditionally so tests can find it with autoStart:false.
+          Positioned(
+            left: 12,
+            top: 48,
+            child: FloatingActionButton.small(
+              key: const Key('searchButton'),
+              heroTag: 'search',
+              onPressed: _openSearch,
+              child: const Icon(Icons.search),
+            ),
+          ),
+          // Destination info card — shown when a search result is active.
+          if (_destination != null)
+            Positioned(
+              left: 12,
+              right: 72,
+              bottom: 90,
+              child: Card(
+                key: const Key('destinationCard'),
+                child: ListTile(
+                  title: Text(_destination!.name),
+                  subtitle: Text(_destination!.kind),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      setState(() => _destination = null);
+                      if (_destReady) {
+                        _style?.updateGeoJsonSource(
+                          id: DestinationMarker.sourceId,
+                          data: DestinationMarker.emptyJson(),
+                        );
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
           // Control buttons render regardless of map state so tests can find them.
           Positioned(
             right: 16,

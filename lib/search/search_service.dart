@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:offline_navigator/search/search_result.dart';
+import 'package:offline_navigator/search/search_screen.dart' show SearchQuerier;
 import 'package:offline_navigator/search/text_normalize.dart';
 
 /// Bump when the bundled search DB changes so storage is refreshed.
@@ -13,7 +14,7 @@ const String _kAsset = 'assets/search/ghatshila.sqlite';
 
 /// Offline place search over a bundled SQLite DB (normalized `search` column,
 /// queried with LIKE — no FTS5, so it works on every Android/SQLite version).
-class SearchService {
+class SearchService implements SearchQuerier {
   SearchService._(this._db);
 
   /// Production constructor: copy the bundled DB to storage, open read-only.
@@ -45,6 +46,7 @@ class SearchService {
   /// contains a word starting with, the normalized [text]; ranked by distance
   /// from (originLat, originLng) ascending, then by match quality (prefix
   /// before mid-word).
+  @override
   Future<List<SearchResult>> query(
     String text, {
     required double originLat,

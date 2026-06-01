@@ -57,6 +57,12 @@ void main() {
     expect(find.text('Open settings'), findsOneWidget);
   });
 
+  testWidgets('search button is present', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
+    await tester.pump();
+    expect(find.byKey(const Key('searchButton')), findsOneWidget);
+  });
+
   testWidgets('layers button opens the style sheet', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
     await tester.pump();
