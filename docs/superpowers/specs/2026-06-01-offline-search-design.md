@@ -29,7 +29,7 @@ on every device, keeps the `sqflite` dependency, and is fast for a single region
 ## 2. Goal
 
 A search icon on the map opens a full-screen search page. Typing shows live (search-as-you-type)
-results drawn from a prebuilt, on-device SQLite FTS5 index of named features, ranked by distance
+results drawn from a prebuilt, on-device SQLite index of named features, ranked by distance
 from the user (text relevance as tiebreak). Selecting a result returns to the map, centers + zooms
 to it, drops a destination marker, and shows an info card (name, kind, distance). Works fully
 offline after first launch.
@@ -39,7 +39,7 @@ offline after first launch.
 | Area | Decision |
 |---|---|
 | Searchable features | **Places, POIs, roads, and water** (all four) |
-| Index source | **Dedicated index from raw OSM** — build-time extract → bundled SQLite FTS5 DB |
+| Index source | **Dedicated index from raw OSM** — build-time extract → bundled SQLite DB (normalized `search` column) |
 | Storage / engine | SQLite via the `sqflite` package, DB copied to storage on first launch (version-stamped). **Matching uses a normalized (lowercased + diacritics-stripped + romanized) `search` column with an index, queried via `LIKE 'term%'` — NOT FTS5.** FTS5 is an optional SQLite compile-time module not guaranteed on older Android; `LIKE` on a normalized indexed column works on every device and is fast for one region's data. |
 | Result action | **Center map + drop a destination marker** + dismissible info card (name, kind, distance) |
 | Search UI | **Search icon → full-screen search page** (bar + live results); returns to map on select |
@@ -96,7 +96,8 @@ MapScreen (modified)
 - **`MapScreen`** (modified) — search entry + destination marker + info card; reuses the pointer's
   source/layer + ready-guard pattern so the marker survives style swaps (no iOS missing-source throw).
 
-**New dependency:** `sqflite` (standard Flutter SQLite, FTS5-capable, Android + iOS).
+**New dependency:** `sqflite` (standard Flutter SQLite, Android + iOS) + `sqflite_common_ffi`
+(dev-only, lets the ranking unit tests open a temp SQLite on the test VM / macOS).
 **New build dependency:** an OSM extractor (`osmium`/`pyosmium`) to filter the pbf — not yet installed
 (plan Task 0 installs it, as we did for the `pmtiles` CLI).
 
