@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:offline_navigator/location/location_service.dart';
 import 'package:offline_navigator/map/map_screen.dart';
+import 'package:offline_navigator/routing/route_plan.dart';
+import 'package:offline_navigator/routing/lat_lng.dart';
 
 void main() {
   testWidgets('MapScreen shows tilt and recenter controls', (tester) async {
@@ -83,5 +85,29 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
     await tester.pump();
     expect(find.byKey(const Key('directionsButton')), findsOneWidget);
+  });
+
+  testWidgets('drive mode shows the nav overlay and hides the FABs',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
+    await tester.pump();
+    // Sanity: FABs present before navigating.
+    expect(find.byKey(const Key('directionsButton')), findsOneWidget);
+
+    final dynamic state = tester.state(find.byType(MapScreen));
+    const plan = RoutePlan(
+      geometry: [LatLng(22.586, 86.476), LatLng(22.59, 86.48)],
+      legs: [],
+      distanceMeters: 1000,
+      duration: Duration(minutes: 5),
+    );
+    // ignore: invalid_use_of_visible_for_testing_member
+    state.enterNavigationForTest(plan);
+    await tester.pump();
+
+    expect(find.byKey(const Key('maneuverBanner')), findsOneWidget);
+    expect(find.byKey(const Key('navEnd')), findsOneWidget);
+    // FABs hidden while navigating.
+    expect(find.byKey(const Key('directionsButton')), findsNothing);
   });
 }

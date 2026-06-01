@@ -23,6 +23,11 @@ import 'package:offline_navigator/search/search_screen.dart';
 import 'package:offline_navigator/search/search_service.dart';
 import 'package:offline_navigator/tiles/tile_service.dart';
 import 'package:offline_navigator/trip/trip_planner_panel.dart';
+import 'package:offline_navigator/nav/nav_state.dart';
+import 'package:offline_navigator/nav/heading_provider.dart';
+import 'package:offline_navigator/nav/trip_progress.dart';
+import 'package:offline_navigator/nav/navigation_overlay.dart';
+import 'package:offline_navigator/routing/live_progress.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key, this.autoStart = true});
@@ -75,7 +80,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // Guards every updateGeoJsonSource(route-line...) call — same pattern as
   // _pointerSourceReady / _destReady to prevent the iOS missing-source crash.
   bool _routeReady = false;
-  bool _planning = false;
+  final _nav = NavController();
+  HeadingProvider? _heading;
+  double _bearing = 0;
+  String? _navStatus; // "Recalculating…" / "You have arrived" / off-route message
+  bool _rerouting = false;
+  int _offRouteHits = 0;
 
   /// How long the follow-camera takes to glide to each new GPS fix. Short
   /// enough to keep up with ~1 fix/sec without the 2s default piling up and
@@ -95,6 +105,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _nav.addListener(() {
+      if (mounted) setState(() {});
+    });
     if (widget.autoStart) {
       _boot();
       _initLocation();
@@ -163,6 +176,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _location.dispose();
     _search?.dispose();
     _tiles.dispose();
+    _nav.dispose();
+    _heading?.dispose();
     super.dispose();
   }
 
@@ -368,11 +383,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       );
     }
     // The follow camera should track the user regardless of pointer readiness.
-    if (_follow) {
+    if (_follow && _nav.state != NavState.navigating) {
       _controller?.animateCamera(
         center: Geographic(lon: loc.lng, lat: loc.lat),
         nativeDuration: _followDuration,
       );
+    }
+    if (_nav.state == NavState.navigating) {
+      _heading?.onUserLocation(loc.headingDeg, loc.speedMps);
+      _onNavTick(domain.LatLng(loc.lat, loc.lng));
     }
   }
 
@@ -438,6 +457,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void showBootErrorForTest(String message) =>
       setState(() => _bootError = message);
 
+  /// Exposed for widget tests only — enters drive mode with [plan] without
+  /// starting the heading provider (no platform channels in tests).
+  @visibleForTesting
+  void enterNavigationForTest(RoutePlan plan) {
+    _plan = plan;
+    _nav.startNavigation(plan);
+    setState(() {});
+  }
+
   Future<void> _openSearch() async {
     final search = _search;
     if (search == null) return; // DB not ready yet
@@ -474,20 +502,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   void _startTrip() {
+    final loc = _lastLoc;
+    final dest = _destination;
     setState(() {
-      _planning = true;
-      // Default start to current location if we have one.
-      final loc = _lastLoc;
       _trip = _trip.withStart(loc == null
           ? null
           : TripPoint(domain.LatLng(loc.lat, loc.lng), 'Your location'));
-      // Seed the destination from a prior search pin if present.
-      final dest = _destination;
       if (dest != null) {
         _trip = _trip.withDestination(
             TripPoint(domain.LatLng(dest.lat, dest.lng), dest.name));
       }
     });
+    _nav.planning();
   }
 
   void _onPlanChanged(RoutePlan? plan) {
@@ -499,6 +525,78 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             ? RouteLayer.emptyJson()
             : RouteLayer.lineJson(plan.geometry),
       );
+    }
+  }
+
+  void _startNavigation() {
+    final plan = _plan;
+    if (plan == null) return;
+    _nav.startNavigation(plan);
+    _heading?.dispose();
+    _heading = HeadingProvider()..start();
+    _heading!.headings.listen((h) {
+      _bearing = h;
+      _driveCamera();
+    });
+  }
+
+  void _driveCamera() {
+    final loc = _lastLoc;
+    final controller = _controller;
+    if (loc == null || controller == null || _nav.state != NavState.navigating) {
+      return;
+    }
+    controller.animateCamera(
+      center: Geographic(lon: loc.lng, lat: loc.lat),
+      zoom: 17,
+      pitch: 60,
+      bearing: _bearing,
+      nativeDuration: const Duration(milliseconds: 700),
+    );
+  }
+
+  void _onNavTick(domain.LatLng pos) {
+    final plan = _nav.activePlan;
+    if (plan == null) return;
+    _nav.advanceTo(pos);
+    if (hasArrived(pos, plan)) {
+      setState(() => _navStatus = 'You have arrived');
+      return;
+    }
+    if (isOffRoute(pos, plan.geometry, thresholdMeters: 40)) {
+      _offRouteHits++;
+      if (_offRouteHits >= 3 && !_rerouting) _reroute(pos);
+    } else {
+      _offRouteHits = 0;
+      if (_navStatus != 'You have arrived') {
+        setState(() => _navStatus = null);
+      }
+    }
+    setState(() {}); // refresh remaining distance/ETA in the overlay
+  }
+
+  Future<void> _reroute(domain.LatLng from) async {
+    final plan = _nav.activePlan;
+    if (plan == null) return;
+    _rerouting = true;
+    setState(() => _navStatus = 'Recalculating…');
+    try {
+      final dest = plan.geometry.last; // already a domain.LatLng
+      final newPlan = await _routing.route([from, dest], _trip.mode);
+      _nav.replacePlan(newPlan);
+      _plan = newPlan;
+      _offRouteHits = 0;
+      if (_routeReady) {
+        _style?.updateGeoJsonSource(
+          id: RouteLayer.sourceId,
+          data: RouteLayer.lineJson(newPlan.geometry),
+        );
+      }
+      setState(() => _navStatus = null);
+    } on RoutingException catch (e) {
+      setState(() => _navStatus = 'Off route — ${e.message}');
+    } finally {
+      _rerouting = false;
     }
   }
 
@@ -524,7 +622,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 unawaited(_setupPointer(style));
               },
               onEvent: (event) {
-                if (event is MapEventLongClick && _planning) {
+                if (event is MapEventLongClick && _nav.state == NavState.planning) {
                   final p = domain.LatLng(event.point.lat, event.point.lon);
                   setState(() {
                     if (_trip.destination == null) {
@@ -584,44 +682,45 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               ),
             ),
           // Control buttons render regardless of map state so tests can find them.
-          Positioned(
-            right: 16,
-            bottom: 32,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FloatingActionButton.small(
-                  key: const Key('directionsButton'),
-                  heroTag: 'directions',
-                  onPressed: _startTrip,
-                  child: const Icon(Icons.directions),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
-                  key: const Key('layersButton'),
-                  heroTag: 'layers',
-                  onPressed: _openStyleSheet,
-                  child: const Icon(Icons.layers),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
-                  key: const Key('tiltButton'),
-                  heroTag: 'tilt',
-                  onPressed: _toggleTilt,
-                  child: const Icon(Icons.threed_rotation),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
-                  key: const Key('recenterButton'),
-                  heroTag: 'recenter',
-                  onPressed: _recenter,
-                  child: const Icon(Icons.my_location),
-                ),
-              ],
+          if (_nav.state != NavState.navigating)
+            Positioned(
+              right: 16,
+              bottom: 32,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton.small(
+                    key: const Key('directionsButton'),
+                    heroTag: 'directions',
+                    onPressed: _startTrip,
+                    child: const Icon(Icons.directions),
+                  ),
+                  const SizedBox(height: 12),
+                  FloatingActionButton.small(
+                    key: const Key('layersButton'),
+                    heroTag: 'layers',
+                    onPressed: _openStyleSheet,
+                    child: const Icon(Icons.layers),
+                  ),
+                  const SizedBox(height: 12),
+                  FloatingActionButton.small(
+                    key: const Key('tiltButton'),
+                    heroTag: 'tilt',
+                    onPressed: _toggleTilt,
+                    child: const Icon(Icons.threed_rotation),
+                  ),
+                  const SizedBox(height: 12),
+                  FloatingActionButton.small(
+                    key: const Key('recenterButton'),
+                    heroTag: 'recenter',
+                    onPressed: _recenter,
+                    child: const Icon(Icons.my_location),
+                  ),
+                ],
+              ),
             ),
-          ),
           // Trip planner panel — shown at the bottom when planning is active.
-          if (_planning)
+          if (_nav.state == NavState.planning)
             Align(
               alignment: Alignment.bottomCenter,
               child: TripPlannerPanel(
@@ -632,10 +731,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     setState(() => _trip = _trip.removeStopAt(i)),
                 onClear: () {
                   setState(() {
-                    _planning = false;
                     _trip = TripState(mode: _trip.mode);
                     _plan = null;
                   });
+                  _nav.clear();
                   if (_routeReady) {
                     _style?.updateGeoJsonSource(
                       id: RouteLayer.sourceId,
@@ -644,7 +743,36 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   }
                 },
                 onPlanChanged: _onPlanChanged,
-                onStart: () {},
+                onStart: _startNavigation,
+              ),
+            ),
+          if (_nav.state == NavState.navigating && _nav.activePlan != null)
+            Positioned.fill(
+              child: NavigationOverlay(
+                plan: _nav.activePlan!,
+                currentManeuverIndex: _nav.currentManeuverIndex,
+                remainingMeters: _lastLoc == null
+                    ? _nav.activePlan!.distanceMeters
+                    : remainingDistanceMeters(
+                        domain.LatLng(_lastLoc!.lat, _lastLoc!.lng),
+                        _nav.activePlan!),
+                remaining: _lastLoc == null
+                    ? _nav.activePlan!.duration
+                    : remainingDuration(
+                        domain.LatLng(_lastLoc!.lat, _lastLoc!.lng),
+                        _nav.activePlan!),
+                statusText: _navStatus,
+                onRecenter: _driveCamera,
+                onEnd: () {
+                  _heading?.dispose();
+                  _heading = null;
+                  setState(() {
+                    _navStatus = null;
+                    _offRouteHits = 0;
+                  });
+                  _nav.exit();
+                  _controller?.animateCamera(pitch: 0, zoom: 15, bearing: 0);
+                },
               ),
             ),
         ],
