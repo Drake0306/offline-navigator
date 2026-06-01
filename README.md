@@ -56,6 +56,43 @@ The script prints per-kind feature counts when done. The current committed DB ha
 
 ---
 
+## Generating downloadable regions (Milestone 5)
+
+The in-app **Download regions** manager fetches per-district packages from a `regions.json`
+catalog on GitHub Releases. The app's catalog URL is `kRegionCatalogUrl` in
+`lib/map/map_screen.dart`. To generate and publish a region (needs `docker`, `osmium`,
+`python3`, `sqlite3`, and the `pmtiles` CLI):
+
+```bash
+# 1. One-time: download a country OSM extract (Geofabrik) into the work dir.
+mkdir -p build/regiongen
+curl -L https://download.geofabrik.de/asia/india-latest.osm.pbf -o build/regiongen/india.osm.pbf
+
+# 2. Build a district package (map + routing + search) for a bbox
+#    (id minLon minLat maxLon maxLat):
+PMTILES=$(go env GOPATH)/bin/pmtiles \
+  tool/generate_region.sh in-jh-east-singhbhum 85.95 22.15 86.95 23.00
+
+# 3. Assemble the catalog (computes sizes + sha256) and publish to GitHub Releases.
+python3 tool/build_region_catalog.py build/regiongen/out \
+  https://github.com/<owner>/<repo>/releases/download/regions-v1 \
+  tool/regions_meta.json build/regiongen/regions.json
+gh release create regions-v1 --repo <owner>/<repo> --title "Offline regions v1" \
+  build/regiongen/out/in-jh-east-singhbhum/in-jh-east-singhbhum.pmtiles \
+  build/regiongen/out/in-jh-east-singhbhum/in-jh-east-singhbhum.valhalla.tar \
+  build/regiongen/out/in-jh-east-singhbhum/in-jh-east-singhbhum.admins.sqlite \
+  build/regiongen/out/in-jh-east-singhbhum/in-jh-east-singhbhum.search.sqlite \
+  build/regiongen/regions.json
+```
+
+Add more districts by appending to `tool/regions_meta.json` and re-running steps 2–3.
+**First published region:** East Singhbhum (Jamshedpur) — 14.9 MB routing tiles (verified:
+Jamshedpur→Ghatshila routes on roads, 52 km / 30 maneuvers), 1,451 searchable places.
+**Known limitation:** clipping a bbox out of the country extract leaves boundary relations
+incomplete, so `valhalla_build_admins` inserts 0 admin areas — routing works, but admin
+metadata (driving-side, names) is limited; a future improvement is an osmium
+`--complete-ways`/`--complete-boundaries` extract for the admin build.
+
 ## Run
 
 ```bash
