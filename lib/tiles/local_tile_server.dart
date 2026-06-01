@@ -12,16 +12,17 @@ class LocalTileServer {
   LocalTileServer({
     required this.reader,
     required this.glyphsDir,
-    required String styleJson,
-  }) : _styleJson = styleJson;
+    required Map<String, String> styles,
+  }) : _styles = Map<String, String>.from(styles);
 
   final PmTilesReader reader;
   final String glyphsDir;
-  String _styleJson;
+  Map<String, String> _styles;
 
-  /// Replaces the style JSON served at `/style.json` without restarting the
-  /// server. Call after [start] once you know the server's [baseUrl].
-  void updateStyle(String json) => _styleJson = json;
+  /// Replaces all served styles (called after [start] once the baseUrl —
+  /// and therefore the rewritten `__BASE__` — is known).
+  void updateStyles(Map<String, String> styles) =>
+      _styles = Map<String, String>.from(styles);
 
   HttpServer? _server;
 
@@ -36,12 +37,11 @@ class LocalTileServer {
   Future<void> start() async {
     final router = Router();
 
-    // --- /style.json ---
-    router.get('/style.json', (Request req) {
-      return Response.ok(
-        _styleJson,
-        headers: {'content-type': 'application/json'},
-      );
+    // --- /style/<name>.json ---
+    router.get('/style/<name>.json', (Request req, String name) {
+      final json = _styles[name];
+      if (json == null) return Response.notFound('no style');
+      return Response.ok(json, headers: {'content-type': 'application/json'});
     });
 
     // --- /tiles/<z>/<x>/<y>.mvt ---

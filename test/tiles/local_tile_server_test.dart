@@ -14,17 +14,28 @@ void main() {
     server = LocalTileServer(
       reader: reader,
       glyphsDir: glyphs.path,
-      styleJson: '{"version":8,"name":"t"}',
+      styles: {'standard': '{"version":8,"name":"std"}'},
     );
     await server.start();
   });
 
   tearDown(() async => server.stop());
 
-  test('serves style.json', () async {
-    final res = await _get('${server.baseUrl}/style.json');
+  test('serves a named style', () async {
+    final res = await _get('${server.baseUrl}/style/standard.json');
     expect(res.statusCode, 200);
-    expect(res.body, contains('"version":8'));
+    expect(res.body, contains('"name":"std"'));
+  });
+
+  test('404 for an unknown style', () async {
+    final res = await _get('${server.baseUrl}/style/nope.json');
+    expect(res.statusCode, 404);
+  });
+
+  test('updateStyles replaces served content', () async {
+    server.updateStyles({'standard': '{"version":8,"name":"updated"}'});
+    final res = await _get('${server.baseUrl}/style/standard.json');
+    expect(res.body, contains('updated'));
   });
 
   test('serves a glyph pbf', () async {
@@ -51,18 +62,6 @@ void main() {
     expect(res.statusCode, 404);
   });
 
-  test('updateStyle serves the new JSON without a restart', () async {
-    final before = await _get('${server.baseUrl}/style.json');
-    expect(before.body, contains('"version":8'));
-
-    server.updateStyle('{"version":8,"name":"updated"}');
-
-    final after = await _get('${server.baseUrl}/style.json');
-    expect(after.statusCode, 200);
-    expect(after.body, contains('"name":"updated"'));
-    // The old value is gone.
-    expect(after.body, isNot(contains('"name":"t"')));
-  });
 }
 
 Future<_Resp> _get(String url) async {
