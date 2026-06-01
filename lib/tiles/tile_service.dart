@@ -31,43 +31,58 @@ class MapReady {
 /// starts a [LocalTileServer], and returns a localhost style URL for MapLibre.
 class TileService {
   LocalTileServer? _server;
+  Map<String, String>? _templates; // style name -> template, cached for restart
+  String? _glyphsDir;
 
-  /// Replaces every `__BASE__` token in [template] with [base] (the server
-  /// origin, e.g. `http://127.0.0.1:PORT`).
+  /// Replaces every `__BASE__` token in [template] with [base].
   static String rewriteStyle(String template, String base) =>
       template.replaceAll('__BASE__', base);
 
-  Future<MapReady> ensureReady() async {
+  /// Prepare storage + start the tile server. When [pmtilesPath] is given, the
+  /// server reads that region's tiles; when null it falls back to copying and
+  /// serving the bundled Ghatshila pack (legacy default).
+  Future<MapReady> ensureReady({String? pmtilesPath}) async {
     final supportDir = await getApplicationSupportDirectory();
     final paths = AppPaths(root: supportDir.path);
 
     if (await paths.needsRefresh(kAssetVersion)) {
-      await _copyAsset('assets/tiles/ghatshila.pmtiles', paths.tilesPath);
+      if (pmtilesPath == null) {
+        await _copyAsset('assets/tiles/ghatshila.pmtiles', paths.tilesPath);
+      }
       await _copyGlyphs(paths.glyphsDir);
       await paths.writeStamp(kAssetVersion);
+    } else if (pmtilesPath == null && !await File(paths.tilesPath).exists()) {
+      // Stamp present but bundled tiles missing (e.g. first non-region run after
+      // an upgrade): make sure the legacy default exists.
+      await _copyAsset('assets/tiles/ghatshila.pmtiles', paths.tilesPath);
     }
 
-    // Load all four style templates from the bundle (keyed by id name).
-    final templates = <String, String>{};
-    for (final id in MapStyleId.values) {
-      templates[id.name] = await rootBundle.loadString(id.assetPath);
-    }
+    _glyphsDir = paths.glyphsDir;
+    _templates = {
+      for (final id in MapStyleId.values) id.name: await rootBundle.loadString(id.assetPath),
+    };
+    return _startServer(pmtilesPath ?? paths.tilesPath);
+  }
 
-    final reader = await PmTilesReader.open(paths.tilesPath);
+  /// Switch the running server to a different region's tiles.
+  Future<MapReady> restartForRegion(String pmtilesPath) async {
+    await _server?.stop();
+    _server = null;
+    return _startServer(pmtilesPath);
+  }
+
+  Future<MapReady> _startServer(String pmtilesPath) async {
+    final reader = await PmTilesReader.open(pmtilesPath);
     final server = LocalTileServer(
       reader: reader,
-      glyphsDir: paths.glyphsDir,
-      styles: const {}, // placeholder; filled after baseUrl is known
+      glyphsDir: _glyphsDir!,
+      styles: const {},
     );
     await server.start();
-
-    // Rewrite __BASE__ in each style to the loopback origin and install them.
     final base = server.baseUrl;
-    final styles = <String, String>{
-      for (final e in templates.entries) e.key: rewriteStyle(e.value, base),
-    };
-    server.updateStyles(styles);
-
+    server.updateStyles({
+      for (final e in _templates!.entries) e.key: rewriteStyle(e.value, base),
+    });
     _server = server;
     return MapReady(base);
   }
@@ -77,12 +92,7 @@ class TileService {
     _server = null;
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
-  /// Loads [assetKey] from the bundle and writes it to [destPath],
-  /// creating parent directories as needed.
+  // ---- private helpers (unchanged) ----
   Future<void> _copyAsset(String assetKey, String destPath) async {
     final data = await rootBundle.load(assetKey);
     final file = File(destPath);
@@ -90,29 +100,17 @@ class TileService {
     await file.writeAsBytes(data.buffer.asUint8List(), flush: true);
   }
 
-  /// Copies every `*.pbf` glyph range for [kFontStack] into [glyphsDir].
-  ///
-  /// Asset keys are discovered via the modern [AssetManifest] API (supported
-  /// since Flutter 3.16; replaces the deprecated `AssetManifest.json` approach).
-  /// Throws a [StateError] if no glyph assets are found, so that a missing-font
-  /// regression surfaces immediately rather than producing a label-less map.
   Future<void> _copyGlyphs(String glyphsDir) async {
     final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
     final glyphKeys = manifest
         .listAssets()
-        .where((k) =>
-            k.startsWith('assets/glyphs/$kFontStack/') && k.endsWith('.pbf'))
+        .where((k) => k.startsWith('assets/glyphs/$kFontStack/') && k.endsWith('.pbf'))
         .toList();
-
     if (glyphKeys.isEmpty) {
-      throw StateError(
-        'No glyph assets found under assets/glyphs/$kFontStack/ '
-        '— offline labels would be missing',
-      );
+      throw StateError('No glyph assets found under assets/glyphs/$kFontStack/ '
+          '— offline labels would be missing');
     }
-
     for (final key in glyphKeys) {
-      // Relative path within the glyphs dir: e.g. "Noto Sans Regular/0-255.pbf"
       final rel = key.substring('assets/glyphs/'.length);
       await _copyAsset(key, '$glyphsDir/$rel');
     }
