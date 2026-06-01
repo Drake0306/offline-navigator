@@ -78,4 +78,10 @@ void main() {
     expect(find.byKey(const Key('style-roads')), findsOneWidget);
     expect(find.byKey(const Key('style-auto')), findsOneWidget);
   });
+
+  testWidgets('directions button is present', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
+    await tester.pump();
+    expect(find.byKey(const Key('directionsButton')), findsOneWidget);
+  });
 }

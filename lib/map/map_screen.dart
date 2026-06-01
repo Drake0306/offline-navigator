@@ -11,10 +11,18 @@ import 'package:offline_navigator/map/destination_marker.dart';
 import 'package:offline_navigator/map/map_style.dart';
 import 'package:offline_navigator/map/style_sheet.dart';
 import 'package:offline_navigator/map/user_pointer.dart';
+import 'package:offline_navigator/routing/fake_routing_service.dart';
+import 'package:offline_navigator/routing/lat_lng.dart' as domain;
+import 'package:offline_navigator/routing/route_layer.dart';
+import 'package:offline_navigator/routing/route_plan.dart';
+import 'package:offline_navigator/routing/routing_service.dart';
+import 'package:offline_navigator/routing/travel_mode.dart';
+import 'package:offline_navigator/routing/trip_state.dart';
 import 'package:offline_navigator/search/search_result.dart';
 import 'package:offline_navigator/search/search_screen.dart';
 import 'package:offline_navigator/search/search_service.dart';
 import 'package:offline_navigator/tiles/tile_service.dart';
+import 'package:offline_navigator/trip/trip_planner_panel.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key, this.autoStart = true});
@@ -54,6 +62,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   MapReady? _ready;
   MapStyleId? _manualStyle; // null = follow OS brightness (Auto)
   MapStyleId _activeStyle = MapStyleId.standard;
+
+  // Trip planner state.
+  final RoutingService _routing = FakeRoutingService();
+  TripState _trip = const TripState(mode: TravelMode.car);
+  RoutePlan? _plan;
+  // True only AFTER the route line source+layer are added. Reset to false on
+  // a style swap (setStyle clears them) until _setupPointer re-adds them.
+  // Guards every updateGeoJsonSource(route-line...) call — same pattern as
+  // _pointerSourceReady / _destReady to prevent the iOS missing-source crash.
+  bool _routeReady = false;
+  bool _planning = false;
 
   /// How long the follow-camera takes to glide to each new GPS fix. Short
   /// enough to keep up with ~1 fix/sec without the 2s default piling up and
@@ -167,6 +186,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _pointerReady = false;
     _pointerSourceReady = false;
     _destReady = false;
+    _routeReady = false;
     controller.setStyle(ready.styleUrlFor(id));
   }
 
@@ -290,12 +310,40 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           data: DestinationMarker.featureJson(dest.lat, dest.lng),
         );
       }
+
+      // 5. Route line — added after the destination marker so the line renders
+      //    below the destination pin. Guarded by _routeReady so the iOS
+      //    missing-source crash cannot happen (same pattern as pointer/dest).
+      await style.addSource(
+        GeoJsonSource(id: RouteLayer.sourceId, data: RouteLayer.emptyJson()),
+      );
+      await style.addLayer(
+        LineStyleLayer(
+          id: RouteLayer.layerId,
+          sourceId: RouteLayer.sourceId,
+          paint: {
+            'line-color': '#2f6bff',
+            'line-width': 5.0,
+            'line-opacity': 0.85,
+          },
+        ),
+      );
+      _routeReady = true;
+      // Re-draw an existing plan after a style swap.
+      final plan = _plan;
+      if (plan != null) {
+        style.updateGeoJsonSource(
+          id: RouteLayer.sourceId,
+          data: RouteLayer.lineJson(plan.geometry),
+        );
+      }
     } catch (e) {
-      // Pointer/destination layer setup failed (e.g. duplicate ids on a style
-      // reload). Allow a later attempt; keep the basemap usable not crashing.
+      // Pointer/destination/route layer setup failed (e.g. duplicate ids on a
+      // style reload). Allow a later attempt; keep the basemap usable not crashing.
       _pointerReady = false;
       _pointerSourceReady = false;
       _destReady = false;
+      _routeReady = false;
       debugPrint('Pointer setup failed: $e');
       return;
     }
@@ -422,6 +470,35 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _startTrip() {
+    setState(() {
+      _planning = true;
+      // Default start to current location if we have one.
+      final loc = _lastLoc;
+      _trip = _trip.withStart(loc == null
+          ? null
+          : TripPoint(domain.LatLng(loc.lat, loc.lng), 'Your location'));
+      // Seed the destination from a prior search pin if present.
+      final dest = _destination;
+      if (dest != null) {
+        _trip = _trip.withDestination(
+            TripPoint(domain.LatLng(dest.lat, dest.lng), dest.name));
+      }
+    });
+  }
+
+  void _onPlanChanged(RoutePlan? plan) {
+    setState(() => _plan = plan);
+    if (_routeReady) {
+      _style?.updateGeoJsonSource(
+        id: RouteLayer.sourceId,
+        data: plan == null
+            ? RouteLayer.emptyJson()
+            : RouteLayer.lineJson(plan.geometry),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -442,6 +519,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               onStyleLoaded: (StyleController style) {
                 _style = style;
                 unawaited(_setupPointer(style));
+              },
+              onEvent: (event) {
+                if (event is MapEventLongClick && _planning) {
+                  final p = domain.LatLng(event.point.lat, event.point.lon);
+                  setState(() {
+                    if (_trip.destination == null) {
+                      _trip = _trip.withDestination(TripPoint(p, 'Dropped pin'));
+                    } else {
+                      _trip = _trip.addStop(TripPoint(p, 'Stop'));
+                    }
+                  });
+                }
               },
             )
           else if (_bootError != null)
@@ -499,6 +588,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               mainAxisSize: MainAxisSize.min,
               children: [
                 FloatingActionButton.small(
+                  key: const Key('directionsButton'),
+                  heroTag: 'directions',
+                  onPressed: _startTrip,
+                  child: const Icon(Icons.directions),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
                   key: const Key('layersButton'),
                   heroTag: 'layers',
                   onPressed: _openStyleSheet,
@@ -521,6 +617,32 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               ],
             ),
           ),
+          // Trip planner panel — shown at the bottom when planning is active.
+          if (_planning)
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: TripPlannerPanel(
+                service: _routing,
+                trip: _trip,
+                onModeChanged: (m) => setState(() => _trip = _trip.withMode(m)),
+                onRemoveStop: (i) =>
+                    setState(() => _trip = _trip.removeStopAt(i)),
+                onClear: () {
+                  setState(() {
+                    _planning = false;
+                    _trip = TripState(mode: _trip.mode);
+                    _plan = null;
+                  });
+                  if (_routeReady) {
+                    _style?.updateGeoJsonSource(
+                      id: RouteLayer.sourceId,
+                      data: RouteLayer.emptyJson(),
+                    );
+                  }
+                },
+                onPlanChanged: _onPlanChanged,
+              ),
+            ),
         ],
       ),
     );
