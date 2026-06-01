@@ -54,6 +54,6 @@ flutter:
     - assets/tiles/ghatshila.pmtiles
     - assets/style/
     - assets/search/
-    - assets/icons/pointer_arrow.png
+    - assets/icons/
     - assets/glyphs/
     - assets/glyphs/Noto Sans Regular/

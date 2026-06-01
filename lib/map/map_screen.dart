@@ -251,12 +251,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       }
 
       // 4. Destination marker (for search results) — empty until a result is
-      //    picked. Reuses the same arrow PNG at a slightly smaller size.
+      //    picked. Uses a teardrop pin icon, anchored at the bottom tip so the
+      //    point of the pin sits exactly on the searched coordinate.
       //    Must be added here (inside the try, same onStyleLoaded scope) so
       //    it is re-created after every style swap, guarded by _destReady.
       await style.addImage(
         'destination-pin-icon',
-        (await rootBundle.load('assets/icons/pointer_arrow.png'))
+        (await rootBundle.load('assets/icons/destination_pin.png'))
             .buffer
             .asUint8List(),
       );
@@ -272,8 +273,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           sourceId: DestinationMarker.sourceId,
           layout: {
             'icon-image': 'destination-pin-icon',
-            'icon-size': 0.6,
+            'icon-size': 0.5,
             'icon-allow-overlap': true,
+            // Anchor the bottom tip of the pin on the coordinate (not center).
+            'icon-anchor': 'bottom',
           },
         ),
       );
@@ -400,7 +403,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       ),
     );
     if (result == null || !mounted) return;
-    setState(() => _destination = result);
+    // Stop following the user, otherwise the next GPS fix would yank the
+    // camera straight back to our own position. Tapping recenter re-enables
+    // follow when the user wants to return to themselves.
+    setState(() {
+      _destination = result;
+      _follow = false;
+    });
     _controller?.animateCamera(
       center: Geographic(lon: result.lng, lat: result.lat),
       zoom: 16,
