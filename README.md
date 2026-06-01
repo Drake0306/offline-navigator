@@ -104,9 +104,14 @@ These steps exercise the full on-device experience that cannot be covered by aut
 16. Open search again, pick a result, then switch map style via the layers button — confirm the destination marker **persists** after the style swap.
 17. Enable **airplane mode**, then open search and type a query — confirm results still appear (search is fully offline, no network needed).
 
-**Trip planner (Milestone 3 part 1 — straight-line placeholder routing):**
+**Trip planner (Milestone 3 — routing):**
 
-> Note: the route line drawn in steps 18–24 is a **straight-line placeholder** (FakeRoutingService). It does not follow roads. Real road-following routing is a separate upcoming plan.
+> Note: on **Android** the route is computed by the **real on-device Valhalla engine** over bundled
+> Ghatshila routing tiles — the line should **follow roads** with a real maneuver list. On iOS (native
+> bridge not yet built) or if the Android native engine is unavailable, the app falls back to a
+> **straight-line placeholder** so the planner is never dead. Routing works only **within the bundled
+> Ghatshila tiles** — a destination outside that area fails gracefully (the region download manager,
+> a later milestone, removes that boundary).
 
 18. Tap the **directions button** (right-side FABs, below the layers button) — confirm the trip planner panel opens.
 19. Confirm the **Start** field defaults to your current location.
@@ -118,6 +123,42 @@ These steps exercise the full on-device experience that cannot be covered by aut
 25. Switch between the four **travel modes** (car, motorbike, bike, walk) — confirm each mode is selectable and the route ETA updates accordingly.
 26. **Clear the trip** (close the panel or tap a clear button) — confirm the route line disappears and the panel resets.
 
+**Native routing acceptance (Milestone 3 part 2 — Android only):**
+
+27. On an **Android** device, plan a trip **inside Ghatshila** and confirm the drawn route **follows roads** (curves along the road network) with a real maneuver list — not a straight diagonal line. This proves the native Valhalla engine ran on-device.
+28. Plan a trip whose destination is **far outside Ghatshila** (e.g. a point hundreds of km away) — confirm it **fails gracefully** ("no route" / "outside the downloaded map area"), not a crash. This is the expected boundary until the region download manager lands.
+29. If the route comes back as a **straight line** on Android, the native engine fell back — check the `flutter run` logs for a `ValhallaPlugin`/MethodChannel error (the most likely cause is the asset path prefix: the plugin opens `assets/routing/...`; if not found it may need the `flutter_assets/` prefix).
+
+---
+
+## Native offline routing (Android — Milestone 3 part 2)
+
+Real on-device routing uses the Valhalla engine (`io.github.rallista:valhalla-mobile`) over **bundled
+Ghatshila routing tiles**, reached through a `MethodChannel` (`offline_navigator/valhalla`) — not FFI.
+The Dart side (`ValhallaRoutingService`) builds the Valhalla request, calls the channel, and parses the
+response with the same `parseValhallaRoute` used everywhere; `fallbackToFake: true` keeps the planner
+working (straight-line) if the native engine is unavailable.
+
+**Scope (honest):** this proves the engine runs on the phone. It routes **only where tiles exist
+on-device** (currently Ghatshila). "Route any region you pick" requires the **region download manager**
+(a later milestone): the phone can only *consume* pre-built tiles — it cannot generate them (tile
+generation is a heavy computer/server job). The engine reads tiles from app storage, so the download
+manager can later drop new regions there and routing works over them with no code change.
+
+### Regenerate routing tiles (optional — committed already)
+Requires Docker + osmium:
+```bash
+tool/generate_valhalla_tiles.sh   # builds + verifies assets/routing/valhalla_tiles.tar in Docker
+```
+
+### Build + run on an Android device
+```bash
+flutter pub get
+flutter run   # on a connected Android device
+```
+First launch copies the bundled tiles into app storage and constructs the native router. Then follow
+manual steps 27–29 above.
+
 ---
 
 ## Architecture
@@ -128,7 +169,7 @@ The app is a Flutter UI (`MapScreen` + `TripPlannerPanel`) over focused modules:
 - **`MapStyleResolver`** — pure-Dart logic that maps (OS brightness, optional manual pick) → active `MapStyleId` (Standard / Light / Dark / Roads). No network access.
 - **`LocationService`** — wraps `geolocator` with permission handling and exponential-moving-average smoothing of position + heading (with wraparound-aware heading interpolation).
 - **`MapScreen`** + **`UserPointer`** — the MapLibre map widget wired to the tile server URL, a GeoJSON symbol layer for the rotatable pointer icon, follow-camera logic, tilt toggle, permission banner, layers FAB + style-picker bottom sheet, and the directions FAB that opens the trip planner.
-- **Routing domain** (`lib/routing/`) — pure-Dart: `RoutePlan`/`RouteLeg`/`Maneuver` value types, polyline6 decoder, Valhalla-JSON parser, distance/duration formatters, `TripState` immutable reducer, live-progress (snap-to-route, current maneuver, off-route detection), and the `RoutingService` abstract interface. The only current implementation is `FakeRoutingService`, which returns straight-line (great-circle) routes. **Real road routing via on-device Valhalla is a separate upcoming plan.**
+- **Routing domain** (`lib/routing/`) — pure-Dart: `RoutePlan`/`RouteLeg`/`Maneuver` value types, polyline6 decoder, Valhalla-JSON parser, distance/duration formatters, `TripState` immutable reducer, live-progress (snap-to-route, current maneuver, off-route detection), and the `RoutingService` abstract interface. Two implementations: `FakeRoutingService` (straight-line, used in tests + as a fallback) and **`ValhallaRoutingService`** — the real engine on **Android**, which builds a Valhalla request, calls the native engine over the `offline_navigator/valhalla` MethodChannel, and parses the response into a `RoutePlan`. The Android native side is `ValhallaPlugin.kt` + the `valhalla-mobile` AAR; tiles are generated by `tool/generate_valhalla_tiles.sh` (Docker) and bundled. iOS native is a later part.
 - **`TripPlannerPanel`** (`lib/trip/`) — the trip planner UI: start/stops/destination editor, four travel-mode chips, compute button, route-summary (distance + ETA), and scrollable maneuver list. Communicates with `MapScreen` to draw the route `LineStyleLayer` and endpoint markers.
 
 Full design rationale and architecture decisions:
@@ -139,14 +180,17 @@ Full design rationale and architecture decisions:
 
 ---
 
-## Verification status (Milestone 3 part 1)
+## Verification status (Milestone 3 part 2)
 
 | What | Status |
 |---|---|
 | `flutter analyze` — whole project | **PASS** — "No issues found!" |
-| `flutter test` — 69 unit + widget tests | **PASS** — all 69 passed |
-| Trip planner UI + domain (fake router) | **PASS** — routing domain (RoutePlan, polyline decoder, Valhalla-JSON parser, formatters, trip-state reducer, live-progress), `RoutingService` interface, `FakeRoutingService`, and the trip planner panel are all unit- and widget-tested and green. The route line drawn in-app uses straight-line segments (see note below). |
-| Real offline routing (Valhalla on-device) | **NOT YET IMPLEMENTED** — on-device Valhalla with native FFI bridge + tile pipeline is a separate upcoming plan. Until that lands, all routing uses `FakeRoutingService` (straight-line great-circle segments, not road-following). |
+| `flutter test` — 75 unit + widget tests | **PASS** — all 75 passed |
+| Trip planner UI + domain | **PASS** — routing domain (RoutePlan, polyline decoder, Valhalla-JSON parser, formatters, trip-state reducer, live-progress), `RoutingService` interface, and the trip planner panel are all unit- and widget-tested and green. |
+| Valhalla routing tiles (Ghatshila) | **PASS (verified in Docker)** — `tool/generate_valhalla_tiles.sh` builds the tiles and a test route (Ghatshila 22.586,86.476 → 22.593,86.515) returns status 0, 5.69 km, 7 maneuvers, a road-following polyline. Bundled as `assets/routing/valhalla_tiles.tar` + `admins.sqlite` + `valhalla.json`. |
+| `ValhallaRoutingService` (request / parse / error / fallback) | **PASS** — unit-tested with a mocked MethodChannel: per-mode request JSON, success→RoutePlan, `{code,message}`→RoutingException, and the straight-line fallback when the native side throws. |
+| On-device Android route (native engine) | **NOT YET VERIFIED** — the Kotlin `ValhallaPlugin` + `valhalla-mobile` AAR cannot be compiled in this dev env (no Java/Android SDK build). The user builds + runs on an Android device (manual steps 27–29) to confirm a real road-following route. Fallback keeps the app usable if it doesn't link. |
+| iOS native routing | **NOT IMPLEMENTED** — Android-first; iOS native bridge is a later part. iOS currently uses the straight-line fallback. |
 | Offline smoke test (`integration_test/offline_smoke_test.dart`) | **WRITTEN, NOT YET RUN** — code complete and `flutter analyze`-clean, but never executed: the dev environment has no mobile device/emulator, and the macOS target needs full Xcode (only the Command Line Tools are installed here). Run it with `-d <device>` to confirm the offline path. |
 | On-device **mobile** visual rendering (Android / iOS) | **NOT YET VERIFIED** — no mobile device was available in the dev environment |
 | Live GPS arrow pointer + follow camera on mobile | **NOT YET VERIFIED** — requires the manual acceptance steps above on a real/emulated device |
