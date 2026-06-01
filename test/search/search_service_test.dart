@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:offline_navigator/search/search_service.dart';
 
@@ -64,5 +66,25 @@ void main() {
     final s = await seeded();
     final res = await s.query('ghat', originLat: 22.586, originLng: 86.476, limit: 1);
     expect(res.length, 1);
+  });
+
+  test('openForRegion opens a region db file by path and queries it', () async {
+    final dir = await Directory.systemTemp.createTemp('searchregion');
+    final path = p.join(dir.path, 'search.sqlite');
+    final seed = await databaseFactory.openDatabase(path);
+    await seed.execute('''CREATE TABLE features(
+      id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_en TEXT,
+      kind TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, search TEXT NOT NULL)''');
+    await seed.insert('features', {
+      'name': 'Jamshedpur', 'name_en': 'Jamshedpur', 'kind': 'place',
+      'lat': 22.80, 'lon': 86.18, 'search': 'jamshedpur jamshedpur',
+    });
+    await seed.close();
+
+    final s = await SearchService.openForRegion(path);
+    final res = await s.query('jam', originLat: 22.80, originLng: 86.18);
+    expect(res.single.name, 'Jamshedpur');
+    await s.dispose();
+    await dir.delete(recursive: true);
   });
 }

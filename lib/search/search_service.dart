@@ -36,6 +36,13 @@ class SearchService implements SearchQuerier {
     return SearchService._(db);
   }
 
+  /// Open an already-on-disk region search DB (read-only). Used by the region
+  /// download manager; unlike [open] it does not copy from bundled assets.
+  static Future<SearchService> openForRegion(String dbPath) async {
+    final db = await openDatabase(dbPath, readOnly: true);
+    return SearchService._(db);
+  }
+
   /// Test constructor: use an already-open database.
   @visibleForTesting
   factory SearchService.forTesting(Database db) = SearchService._;
