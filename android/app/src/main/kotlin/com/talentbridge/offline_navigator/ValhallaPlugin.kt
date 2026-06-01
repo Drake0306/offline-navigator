@@ -1,0 +1,79 @@
+package com.talentbridge.offline_navigator
+
+import android.content.Context
+import com.valhalla.valhalla.ValhallaActor
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
+
+/**
+ * MethodChannel bridge to the native Valhalla engine (valhalla-mobile).
+ *
+ * ensureReady: copies the bundled tiles tar + admins.sqlite from Flutter assets
+ * into app files storage (once, version-stamped), writes a valhalla.json whose
+ * mjolnir paths point at that storage, and constructs a ValhallaActor.
+ * route: forwards a Valhalla request JSON string to ValhallaActor.route().
+ */
+class ValhallaPlugin(private val context: Context) {
+    companion object {
+        const val CHANNEL = "offline_navigator/valhalla"
+        // Bump when bundled tiles change so storage is refreshed.
+        const val VERSION = "1"
+    }
+
+    private var actor: ValhallaActor? = null
+
+    fun register(engine: FlutterEngine) {
+        MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "ensureReady" -> try {
+                        ensureReady(); result.success(null)
+                    } catch (e: Exception) {
+                        result.error("ENSURE_FAILED", e.message, null)
+                    }
+                    "route" -> try {
+                        val req = call.argument<String>("request")
+                            ?: return@setMethodCallHandler result.error(
+                                "BAD_ARGS", "missing request", null)
+                        result.success(route(req))
+                    } catch (e: Exception) {
+                        result.error("ROUTE_FAILED", e.message, null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun routingDir(): File =
+        File(context.filesDir, "routing").apply { mkdirs() }
+
+    private fun ensureReady() {
+        if (actor != null) return
+        val dir = routingDir()
+        val stamp = File(dir, ".version")
+        val fresh = !stamp.exists() || stamp.readText().trim() != VERSION
+        if (fresh) {
+            copyAsset("assets/routing/valhalla_tiles.tar", File(dir, "valhalla_tiles.tar"))
+            copyAsset("assets/routing/admins.sqlite", File(dir, "admins.sqlite"))
+            // Read the bundled config template and rewrite __APPDIR__.
+            val template = context.assets.open("assets/routing/valhalla.json")
+                .bufferedReader().use { it.readText() }
+            val config = template.replace("__APPDIR__", dir.absolutePath)
+            File(dir, "valhalla.json").writeText(config)
+            stamp.writeText(VERSION)
+        }
+        actor = ValhallaActor(File(dir, "valhalla.json").absolutePath)
+    }
+
+    private fun route(request: String): String {
+        ensureReady()
+        return actor!!.route(request)
+    }
+
+    private fun copyAsset(assetPath: String, dest: File) {
+        context.assets.open(assetPath).use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+        }
+    }
+}
