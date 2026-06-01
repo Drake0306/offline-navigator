@@ -20,6 +20,12 @@ The bundled Protomaps tile pack's `places`, `pois`, `roads`, and `water` layers 
 vector-layer metadata. But rather than search the tiles (lossy at low zoom), we build a dedicated
 search index from raw OpenStreetMap data (the user's chosen, most-accurate approach).
 
+**Matching engine note:** the index uses a normalized text column + `LIKE 'term%'`, NOT SQLite
+FTS5. `sqflite` uses the OS's SQLite, and FTS5 is an optional compile-time module that is not
+reliably present on older Android — an FTS5 query would throw at runtime there and kill search.
+A normalized (lowercased, diacritics-stripped, romanized) `search` column with a plain index works
+on every device, keeps the `sqflite` dependency, and is fast for a single region's feature count.
+
 ## 2. Goal
 
 A search icon on the map opens a full-screen search page. Typing shows live (search-as-you-type)
@@ -34,7 +40,7 @@ offline after first launch.
 |---|---|
 | Searchable features | **Places, POIs, roads, and water** (all four) |
 | Index source | **Dedicated index from raw OSM** — build-time extract → bundled SQLite FTS5 DB |
-| Storage / engine | SQLite **FTS5** via the `sqflite` package; DB copied to storage on first launch (version-stamped) |
+| Storage / engine | SQLite via the `sqflite` package, DB copied to storage on first launch (version-stamped). **Matching uses a normalized (lowercased + diacritics-stripped + romanized) `search` column with an index, queried via `LIKE 'term%'` — NOT FTS5.** FTS5 is an optional SQLite compile-time module not guaranteed on older Android; `LIKE` on a normalized indexed column works on every device and is fast for one region's data. |
 | Result action | **Center map + drop a destination marker** + dismissible info card (name, kind, distance) |
 | Search UI | **Search icon → full-screen search page** (bar + live results); returns to map on select |
 | Ranking | **Distance from user, then text match**; falls back to map-center distance if no GPS fix |
@@ -44,9 +50,10 @@ offline after first launch.
 
 **In scope**
 - Build-time pipeline: clip raw OSM to the Ghatshila bbox (`86.35,22.45,86.65,22.75`), extract named
-  places/POIs/roads/water, write `assets/search/ghatshila.sqlite` (FTS5 over names + a row table).
+  places/POIs/roads/water, write `assets/search/ghatshila.sqlite` (a `features` row table with a
+  normalized, indexed `search` column).
 - `SearchService`: copy the bundled DB to storage (version-stamped), open via `sqflite`, run
-  prefix FTS queries, rank distance-then-text, return `SearchResult`s.
+  normalized `LIKE 'term%'` prefix queries, rank distance-then-text, return `SearchResult`s.
 - `SearchScreen`: full-screen search with a debounced live results list; returns the chosen result.
 - `MapScreen`: a search entry icon; on a returned result, animate camera + drop a `destination`
   GeoJSON marker (robust across style swaps via the same `…SourceReady` guard the pointer uses) +
@@ -72,8 +79,8 @@ SearchService (new)
         │ reads
         ▼
 search.sqlite (bundled asset: assets/search/ghatshila.sqlite)
-  • features(id, name, name_en, kind, lat, lon)
-  • features_fts FTS5(name, name_en) contentless-linked to features
+  • features(id, name, name_en, kind, lat, lon, search)  -- `search` = normalized, indexed
+  • INDEX idx_features_search ON features(search)
         ▲ built by
 tool/generate_search_index.* (build-time; NOT shipped in the app)
 
@@ -100,15 +107,18 @@ MapScreen (modified)
    `osmium extract --bbox`).
 2. Filter to named features in places/POIs/roads/water; for each, capture display `name`, romanized
    `name_en` (from `name:en` or transliteration when available), a normalized `kind`, and a
-   representative `lat/lon` (point for nodes; centroid for ways/areas).
-3. Write `search.sqlite`: insert rows into `features`, build `features_fts`. Bundle under
-   `assets/search/`. (Document the exact commands in `tool/generate_search_index`.)
+   representative `lat/lon` (point for nodes; centroid for ways/areas). Compute a `search` string =
+   `normalize(name) || ' ' || normalize(name_en)` where `normalize` lowercases, strips diacritics,
+   and collapses whitespace (so typing English or local script both match).
+3. Write `search.sqlite`: insert rows into `features` and create `idx_features_search` on `search`.
+   Bundle under `assets/search/`. (Document the exact commands in `tool/generate_search_index`.)
 
 **Runtime:**
 1. On first launch (or version bump), `SearchService.ensureReady()` copies the DB to app storage and
    opens it. (Version-stamped like the tile assets.)
-2. Each keystroke (debounced ~200ms): `query(text, origin, limit:30)` runs an FTS5 **prefix** match
-   (`name MATCH '<term>*'`), joined to `features` for `kind`/`lat`/`lon`.
+2. Each keystroke (debounced ~200ms): `query(text, origin, limit:30)` normalizes the term the same
+   way and runs `SELECT ... FROM features WHERE search LIKE ? ` with a `'<norm-term>%'` (prefix) and
+   a secondary `'% <norm-term>%'` (word-start) pattern so mid-name word matches also hit.
 3. Rank in Dart: haversine distance from `origin` (GPS fix, else map center) ascending; tiebreak by
    text-match quality (exact/prefix above deeper matches). Fill `distanceM`. Return top N.
 4. `SearchScreen` renders the list; selection pops the `SearchResult`.
@@ -124,15 +134,15 @@ CREATE TABLE features(
   name_en TEXT,            -- romanized/English (name:en) when available
   kind    TEXT NOT NULL,   -- 'place' | 'poi' | 'road' | 'water' (+ optional subkind)
   lat     REAL NOT NULL,
-  lon     REAL NOT NULL
+  lon     REAL NOT NULL,
+  search  TEXT NOT NULL    -- normalize(name)+' '+normalize(name_en): lowercased,
+                           -- diacritics-stripped, whitespace-collapsed
 );
-CREATE VIRTUAL TABLE features_fts USING fts5(
-  name, name_en, content='features', content_rowid='id',
-  tokenize="unicode61 remove_diacritics 2"
-);
+CREATE INDEX idx_features_search ON features(search);
 ```
-Indexing both `name` and `name_en` lets a user type English or local script and match the same row.
-`unicode61 remove_diacritics` normalizes accents/scripts for forgiving matching.
+The `search` column folds both name forms into one normalized, indexed string, so typing English or
+local script matches the same row via `LIKE`. No FTS5 — works on every SQLite/Android version.
+The same `normalize()` is applied to the user's query term before building the `LIKE` pattern.
 
 ## 8. Error handling & edge cases
 
@@ -150,9 +160,12 @@ Indexing both `name` and `name_en` lets a user type English or local script and 
 ## 9. Testing
 
 - **Unit — `SearchResult`:** haversine distance (known coords → known metres); equality.
-- **Unit — `SearchService` ranking:** seed a temp SQLite with a few rows; assert distance-then-text
-  ordering, prefix matching, `name` vs `name_en` dual-match (type Latin → matches a
-  Devanagari-named row), `limit` cap, empty-query → empty, and the no-origin (map-center) fallback.
+- **Unit — `normalize()`:** lowercases, strips diacritics, collapses whitespace; deterministic for the
+  same input used at build-time and query-time (so patterns match).
+- **Unit — `SearchService` ranking:** seed a temp SQLite (via `sqflite_common_ffi` on the test VM)
+  with a few rows; assert distance-then-text ordering, `LIKE` prefix + word-start matching, `name`
+  vs `name_en` dual-match via the `search` column (type Latin → matches a Devanagari-named row),
+  `limit` cap, empty-query → empty, and the no-origin (map-center) fallback.
 - **Unit — build script sanity:** a small fixture input → DB has the expected schema + rows. If a real
   `.osm.pbf` fixture is too heavy, assert schema + a hand-seeded insert/query path instead.
 - **Widget — `SearchScreen`:** typing shows results (mocked service); tap pops the chosen result;
