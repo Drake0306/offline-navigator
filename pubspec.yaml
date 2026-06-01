@@ -34,6 +34,8 @@ dependencies:
   path: ^1.9.1
   sqflite: ^2.4.1
   flutter_compass: ^0.8.1
+  http: ^1.2.2      # region catalog fetch + file downloads (Milestone 5)
+  crypto: ^3.0.6    # sha256 integrity verification of downloaded region files
 
 dev_dependencies:
   flutter_test:
