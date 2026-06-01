@@ -644,6 +644,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   }
                 },
                 onPlanChanged: _onPlanChanged,
+                onStart: () {},
               ),
             ),
         ],

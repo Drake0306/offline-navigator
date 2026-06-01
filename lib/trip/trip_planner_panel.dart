@@ -16,6 +16,7 @@ class TripPlannerPanel extends StatefulWidget {
     required this.onRemoveStop,
     required this.onClear,
     required this.onPlanChanged,
+    required this.onStart,
   });
 
   final RoutingService service;
@@ -27,6 +28,9 @@ class TripPlannerPanel extends StatefulWidget {
   /// Reports the latest computed plan (or null on error/none) to the parent so
   /// it can draw the route line.
   final ValueChanged<RoutePlan?> onPlanChanged;
+
+  /// Called when the user taps Start to begin turn-by-turn navigation.
+  final VoidCallback onStart;
 
   @override
   State<TripPlannerPanel> createState() => _TripPlannerPanelState();
@@ -181,6 +185,16 @@ class _TripPlannerPanelState extends State<TripPlannerPanel> {
                               _plan!.maneuvers[i].distanceMeters)),
                         ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    key: const Key('startNavButton'),
+                    onPressed: widget.onStart,
+                    icon: const Icon(Icons.navigation),
+                    label: const Text('Start'),
                   ),
                 ),
               ] else

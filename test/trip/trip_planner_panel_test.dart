@@ -24,6 +24,7 @@ void main() {
           onRemoveStop: (_) {},
           onClear: () {},
           onPlanChanged: (_) {},
+          onStart: () {},
         ),
       ),
     ));
@@ -42,6 +43,7 @@ void main() {
           onRemoveStop: (_) {},
           onClear: () {},
           onPlanChanged: (_) {},
+          onStart: () {},
         ),
       ),
     ));
@@ -59,11 +61,30 @@ void main() {
           onRemoveStop: (_) {},
           onClear: () {},
           onPlanChanged: (_) {},
+          onStart: () {},
         ),
       ),
     ));
     await tester.pump();
     expect(find.byKey(const Key('mode-car')), findsOneWidget);
     expect(find.byKey(const Key('mode-walk')), findsOneWidget);
+  });
+
+  testWidgets('shows Start button once a route is computed', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: TripPlannerPanel(
+          service: FakeRoutingService(),
+          trip: _routable(),
+          onModeChanged: (_) {},
+          onRemoveStop: (_) {},
+          onClear: () {},
+          onPlanChanged: (_) {},
+          onStart: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('startNavButton')), findsOneWidget);
   });
 }
