@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/services.dart' show rootBundle, AssetManifest;
 import 'package:path_provider/path_provider.dart';
 import 'package:offline_navigator/common/app_paths.dart';
+import 'package:offline_navigator/map/map_style.dart';
 import 'package:offline_navigator/tiles/local_tile_server.dart';
 import 'package:offline_navigator/tiles/pmtiles_reader.dart';
 
@@ -11,13 +12,19 @@ const String kAssetVersion = '1';
 /// The font stack folder name shipped under assets/glyphs/ (must match Task 3).
 const String kFontStack = 'Noto Sans Regular';
 
-/// Returned by [TileService.ensureReady]; carries the style URL and the
-/// running server (so the caller can stop it when done).
+/// Returned by [TileService.ensureReady]. Carries the server base origin and
+/// the running server. Build a per-style URL with [styleUrlFor].
 class MapReady {
-  MapReady(this.styleUrl, this.server);
+  MapReady(this.base, [this.server]);
 
-  final String styleUrl;
-  final LocalTileServer server;
+  /// The server origin, e.g. `http://127.0.0.1:54321`.
+  final String base;
+  final LocalTileServer? server;
+
+  String styleUrlFor(MapStyleId id) => '$base${id.route}';
+
+  /// Convenience: the default (Standard) style URL.
+  String get styleUrl => styleUrlFor(MapStyleId.standard);
 }
 
 /// Copies bundled offline assets to on-device storage (once, version-stamped),
@@ -34,32 +41,35 @@ class TileService {
     final supportDir = await getApplicationSupportDirectory();
     final paths = AppPaths(root: supportDir.path);
 
-    // Copy bundled assets to storage on first run (or after a version bump).
     if (await paths.needsRefresh(kAssetVersion)) {
       await _copyAsset('assets/tiles/ghatshila.pmtiles', paths.tilesPath);
       await _copyGlyphs(paths.glyphsDir);
       await paths.writeStamp(kAssetVersion);
     }
 
-    // Load the style template from the bundle.
-    final styleTemplate =
-        await rootBundle.loadString('assets/style/style.json');
+    // Load all four style templates from the bundle (keyed by id name).
+    final templates = <String, String>{};
+    for (final id in MapStyleId.values) {
+      templates[id.name] = await rootBundle.loadString(id.assetPath);
+    }
 
-    // Open the tile reader and start the server.
     final reader = await PmTilesReader.open(paths.tilesPath);
     final server = LocalTileServer(
       reader: reader,
       glyphsDir: paths.glyphsDir,
-      styleJson: '{}', // placeholder; replaced below once we know baseUrl
+      styles: const {}, // placeholder; filled after baseUrl is known
     );
     await server.start();
 
-    // Now that we know the ephemeral port, rewrite the style and push it in
-    // without any restart — the clean single-start design.
-    server.updateStyle(rewriteStyle(styleTemplate, server.baseUrl));
+    // Rewrite __BASE__ in each style to the loopback origin and install them.
+    final base = server.baseUrl;
+    final styles = <String, String>{
+      for (final e in templates.entries) e.key: rewriteStyle(e.value, base),
+    };
+    server.updateStyles(styles);
 
     _server = server;
-    return MapReady('${server.baseUrl}/style.json', server);
+    return MapReady(base, server);
   }
 
   Future<void> dispose() async {

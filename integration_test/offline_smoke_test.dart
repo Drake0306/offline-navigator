@@ -42,7 +42,7 @@ void main() {
               n)
           .floor();
 
-      final base = ready.styleUrl.replaceAll('/style.json', '');
+      final base = ready.base;
       final tileUrl = '$base/tiles/$z/$tileX/$tileY.mvt';
       final tileRes = await _get(tileUrl);
 
