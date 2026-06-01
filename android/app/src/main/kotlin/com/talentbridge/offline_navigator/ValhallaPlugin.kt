@@ -54,10 +54,10 @@ class ValhallaPlugin(private val context: Context) {
         val stamp = File(dir, ".version")
         val fresh = !stamp.exists() || stamp.readText().trim() != VERSION
         if (fresh) {
-            copyAsset("assets/routing/valhalla_tiles.tar", File(dir, "valhalla_tiles.tar"))
-            copyAsset("assets/routing/admins.sqlite", File(dir, "admins.sqlite"))
+            copyAsset(assetPath("valhalla_tiles.tar"), File(dir, "valhalla_tiles.tar"))
+            copyAsset(assetPath("admins.sqlite"), File(dir, "admins.sqlite"))
             // Read the bundled config template and rewrite __APPDIR__.
-            val template = context.assets.open("assets/routing/valhalla.json")
+            val template = context.assets.open(assetPath("valhalla.json"))
                 .bufferedReader().use { it.readText() }
             val config = template.replace("__APPDIR__", dir.absolutePath)
             File(dir, "valhalla.json").writeText(config)
@@ -65,6 +65,14 @@ class ValhallaPlugin(private val context: Context) {
         }
         actor = ValhallaActor(File(dir, "valhalla.json").absolutePath)
     }
+
+    /**
+     * Flutter bundles assets under `flutter_assets/` in the Android asset
+     * namespace, so a `pubspec.yaml` asset at `assets/routing/x` is opened via
+     * `flutter_assets/assets/routing/x` from AssetManager — NOT `assets/...`.
+     */
+    private fun assetPath(name: String): String =
+        "flutter_assets/assets/routing/$name"
 
     private fun route(request: String): String {
         ensureReady()
