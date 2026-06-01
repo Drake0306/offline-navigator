@@ -65,9 +65,9 @@ import 'package:offline_navigator/routing/polyline.dart';
 
 void main() {
   test('decodes a known polyline6 string', () {
-    // Encode of [(38.5,-120.2),(40.7,-120.95),(43.252,-126.453)] at precision 6.
-    // We assert round-trip via a precomputed polyline6 below.
-    const encoded = '_gz_iAnpp+vAakp`@vd~bDeoy{C~znqC';
+    // Verified polyline6 encoding of [(38.5,-120.2),(40.7,-120.95),(43.252,-126.453)]
+    // (precision 1e6). Computed + round-trip-checked against the decoder below.
+    const encoded = '_izlhA~rlgdF_{geC~ywl@_kwzCn`{nI';
     final pts = decodePolyline6(encoded);
     expect(pts.length, 3);
     expect(pts[0].lat, closeTo(38.5, 1e-5));
