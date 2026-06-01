@@ -64,11 +64,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   MapStyleId _activeStyle = MapStyleId.standard;
 
   // Trip planner state.
-  // Real on-device Valhalla routing; falls back to straight-line if the native
-  // engine isn't available (e.g. iOS, or a failed Android build) so the trip
-  // planner is never dead. Routing works only where tiles exist on-device
-  // (currently the bundled Ghatshila region).
-  final RoutingService _routing = ValhallaRoutingService(fallbackToFake: true);
+  // No silent fallback: a native routing failure now surfaces a real error in
+  // the trip panel instead of secretly drawing a straight line. (FakeRoutingService
+  // is kept for tests only.) Routing works only within the bundled Ghatshila tiles.
+  final RoutingService _routing = ValhallaRoutingService(fallbackToFake: false);
   TripState _trip = const TripState(mode: TravelMode.car);
   RoutePlan? _plan;
   // True only AFTER the route line source+layer are added. Reset to false on

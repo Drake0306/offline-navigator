@@ -72,4 +72,21 @@ void main() {
       throwsA(isA<RoutingException>()),
     );
   });
+
+  test('maps Valhalla code 171 to a friendly "outside map area" message',
+      () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'ensureReady') return null;
+      if (call.method == 'route') {
+        return '{"code":171,"message":"No suitable edges near location"}';
+      }
+      return null;
+    });
+    final svc = ValhallaRoutingService(fallbackToFake: false);
+    await expectLater(
+      () => svc.route(const [LatLng(0, 0), LatLng(1, 1)], TravelMode.car),
+      throwsA(isA<RoutingException>().having(
+          (e) => e.message, 'message', contains('outside the downloaded map area'))),
+    );
+  });
 }

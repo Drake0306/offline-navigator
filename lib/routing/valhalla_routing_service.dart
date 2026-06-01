@@ -55,8 +55,15 @@ class ValhallaRoutingService implements RoutingService {
     final decoded = jsonDecode(responseJson);
     if (decoded is Map && decoded.containsKey('code') &&
         !decoded.containsKey('trip')) {
-      throw RoutingException(
-          (decoded['message'] as String?) ?? 'No route found');
+      final code = (decoded['code'] as num?)?.toInt();
+      final msg = (decoded['message'] as String?) ?? 'No route found';
+      // 171 = no suitable edges near a location (point off the road network or
+      // outside the downloaded tiles).
+      if (code == 171) {
+        throw const RoutingException(
+            'No route found near here — the point may be outside the downloaded map area.');
+      }
+      throw RoutingException(msg);
     }
     try {
       return parseValhallaRoute(decoded as Map<String, Object?>);
