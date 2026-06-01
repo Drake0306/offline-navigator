@@ -19,8 +19,9 @@ android {
         applicationId = "com.talentbridge.offline_navigator"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // valhalla-mobile (0.1.0) declares minSdk 26, so the app floor must be
-        // >= 26 or the manifest merge fails. Keep Flutter's value if it's higher.
+        // valhalla-mobile declares minSdk 26 (0.1.0 and 0.3.0 both), so the app
+        // floor must be >= 26 or the manifest merge fails. Keep Flutter's value
+        // if it's higher.
         minSdk = maxOf(flutter.minSdkVersion, 26)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -47,5 +48,10 @@ flutter {
 }
 
 dependencies {
-    implementation("io.github.rallista:valhalla-mobile:0.1.0")
+    // 0.3.0 (Nov 2025) is the newest release that keeps the public `ValhallaActor`
+    // raw-string API we use; 0.3.1+ made it `internal`. Bumped from the original
+    // 0.1.0 (Oct 2024) to pull ~13 months of newer native builds — far more likely
+    // to load on a modern device (NDK / 16 KB memory-page support) and a Valhalla
+    // engine version aligned with the tiles we build from `valhalla/valhalla:latest`.
+    implementation("io.github.rallista:valhalla-mobile:0.3.0")
 }

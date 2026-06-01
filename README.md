@@ -157,6 +157,15 @@ on-device** (currently Ghatshila). "Route any region you pick" requires the **re
 generation is a heavy computer/server job). The engine reads tiles from app storage, so the download
 manager can later drop new regions there and routing works over them with no code change.
 
+**Engine version (`valhalla-mobile`):** pinned to **0.3.0** (Nov 2025) — the newest release that keeps
+the public `ValhallaActor` raw-string API this bridge uses (0.3.1+ made it `internal`, which would force
+a typed-model rewrite). Bumped up from the original 0.1.0 (Oct 2024) because a ~18-month-old native build
+is the likeliest reason routing fails to start on a modern device — newer NDK / 16 KB memory-page support,
+and a Valhalla engine version that matches the tiles we build from `valhalla/valhalla:latest`. The bridge
+now also catches `Throwable` (not just `Exception`), so a native-library load failure surfaces a **named
+reason** on the trip panel (e.g. `UnsatisfiedLinkError: dlopen failed…`) and a full stack in `adb logcat`
+under the `ValhallaPlugin` tag, instead of crashing or showing a bare message.
+
 ### Regenerate routing tiles (optional — committed already)
 Requires Docker + osmium:
 ```bash
