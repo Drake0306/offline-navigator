@@ -50,7 +50,7 @@ flutter:
 
   assets:
     - assets/tiles/ghatshila.pmtiles
-    - assets/style/style.json
+    - assets/style/
     - assets/icons/pointer_arrow.png
     - assets/glyphs/
     - assets/glyphs/Noto Sans Regular/
