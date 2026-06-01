@@ -1,6 +1,10 @@
 # Offline Navigator
 
-An offline-first Flutter navigation app for **Android and iOS**. **Milestone 2b** adds **offline destination search** — a search icon opens a full-screen search page that queries a bundled SQLite database of named places, POIs, roads, and water features; results are ranked nearest-first; tapping a result centers the map, drops a destination marker, and shows an info card. All search happens on-device with no network access required.
+An offline-first Flutter navigation app for **Android and iOS**. **Milestone 3 (part 1)** adds a **trip planner** — tap the directions button (right-side FABs) to open the trip planner panel. Set a start point (defaults to your location), set a destination via search or by long-pressing the map, and optionally add stops the same way. Choose from four travel modes: car, motorbike, bike, or walk. The planner draws a route line on the map and shows distance, ETA, and a step-by-step maneuver list.
+
+> **Important — routing is not yet real road routing.** The route line is currently drawn by a `FakeRoutingService` that connects your points with straight lines (great-circle segments). It does **not** follow roads, paths, or any on-device map data. Real offline road routing powered by on-device Valhalla (native FFI + tile pipeline) is a **separate upcoming plan** that has not yet been built. Everything else — the trip planner UI, travel mode selector, maneuver list display, live-progress logic, and the `RoutingService` interface — is complete and fully tested.
+
+**Milestone 2b** adds **offline destination search** — a search icon opens a full-screen search page that queries a bundled SQLite database of named places, POIs, roads, and water features; results are ranked nearest-first; tapping a result centers the map, drops a destination marker, and shows an info card. All search happens on-device with no network access required.
 
 **Milestone 2a** added three capabilities: a **4-style map switcher** (Standard, Light, Dark, Roads) behind a layers button and bottom-sheet picker; **auto dark mode** that follows the phone's system brightness (Standard in light mode, Dark in dark mode) with a live switch when you toggle the system setting; and a **fixed location-permission prompt** that now appears at launch on a fresh install, independent of map loading. All behavior is fully offline.
 
@@ -100,30 +104,49 @@ These steps exercise the full on-device experience that cannot be covered by aut
 16. Open search again, pick a result, then switch map style via the layers button — confirm the destination marker **persists** after the style swap.
 17. Enable **airplane mode**, then open search and type a query — confirm results still appear (search is fully offline, no network needed).
 
+**Trip planner (Milestone 3 part 1 — straight-line placeholder routing):**
+
+> Note: the route line drawn in steps 18–24 is a **straight-line placeholder** (FakeRoutingService). It does not follow roads. Real road-following routing is a separate upcoming plan.
+
+18. Tap the **directions button** (right-side FABs, below the layers button) — confirm the trip planner panel opens.
+19. Confirm the **Start** field defaults to your current location.
+20. Set a **destination** by tapping the destination field and using search, or by long-pressing the map — confirm the destination is set and its label appears in the panel.
+21. Tap **Get Directions** (or equivalent compute button) — confirm a route line draws on the map connecting your points with a distance and ETA shown in the panel.
+22. Confirm a **maneuver list** appears below the summary (a step-by-step list of instructions).
+23. Long-press the map at a different location to **add a stop** — confirm the stop appears in the panel's point list and the route updates.
+24. **Remove the stop** (swipe or tap the remove button next to it) — confirm the stop is removed and the route updates.
+25. Switch between the four **travel modes** (car, motorbike, bike, walk) — confirm each mode is selectable and the route ETA updates accordingly.
+26. **Clear the trip** (close the panel or tap a clear button) — confirm the route line disappears and the panel resets.
+
 ---
 
 ## Architecture
 
-The app is a thin Flutter UI (`MapScreen`) over three focused modules:
+The app is a Flutter UI (`MapScreen` + `TripPlannerPanel`) over focused modules:
 
 - **`TileService`** — copies the bundled PMTiles pack and glyph fonts into application support storage on first launch, then starts an in-process `shelf` HTTP server on `127.0.0.1` that serves `/tiles/{z}/{x}/{y}.mvt`, `/fonts/{fontstack}/{range}.pbf`, and all four styles at `/style/<name>.json` to MapLibre.
 - **`MapStyleResolver`** — pure-Dart logic that maps (OS brightness, optional manual pick) → active `MapStyleId` (Standard / Light / Dark / Roads). No network access.
 - **`LocationService`** — wraps `geolocator` with permission handling and exponential-moving-average smoothing of position + heading (with wraparound-aware heading interpolation).
-- **`MapScreen`** + **`UserPointer`** — the MapLibre map widget wired to the tile server URL, a GeoJSON symbol layer for the rotatable pointer icon, follow-camera logic, tilt toggle, permission banner, and the layers FAB + style-picker bottom sheet.
+- **`MapScreen`** + **`UserPointer`** — the MapLibre map widget wired to the tile server URL, a GeoJSON symbol layer for the rotatable pointer icon, follow-camera logic, tilt toggle, permission banner, layers FAB + style-picker bottom sheet, and the directions FAB that opens the trip planner.
+- **Routing domain** (`lib/routing/`) — pure-Dart: `RoutePlan`/`RouteLeg`/`Maneuver` value types, polyline6 decoder, Valhalla-JSON parser, distance/duration formatters, `TripState` immutable reducer, live-progress (snap-to-route, current maneuver, off-route detection), and the `RoutingService` abstract interface. The only current implementation is `FakeRoutingService`, which returns straight-line (great-circle) routes. **Real road routing via on-device Valhalla is a separate upcoming plan.**
+- **`TripPlannerPanel`** (`lib/trip/`) — the trip planner UI: start/stops/destination editor, four travel-mode chips, compute button, route-summary (distance + ETA), and scrollable maneuver list. Communicates with `MapScreen` to draw the route `LineStyleLayer` and endpoint markers.
 
 Full design rationale and architecture decisions:
 - Spec: `docs/superpowers/specs/2026-05-31-offline-map-foundation-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-05-31-offline-map-foundation.md`
+- Trip planner plan: `docs/superpowers/plans/2026-06-01-trip-planner-ui.md`
 - Research: `offline-map-app-research.html`
 
 ---
 
-## Verification status (Milestone 2b)
+## Verification status (Milestone 3 part 1)
 
 | What | Status |
 |---|---|
 | `flutter analyze` — whole project | **PASS** — "No issues found!" |
-| `flutter test` — 46 unit + widget tests | **PASS** — all 46 passed |
+| `flutter test` — 69 unit + widget tests | **PASS** — all 69 passed |
+| Trip planner UI + domain (fake router) | **PASS** — routing domain (RoutePlan, polyline decoder, Valhalla-JSON parser, formatters, trip-state reducer, live-progress), `RoutingService` interface, `FakeRoutingService`, and the trip planner panel are all unit- and widget-tested and green. The route line drawn in-app uses straight-line segments (see note below). |
+| Real offline routing (Valhalla on-device) | **NOT YET IMPLEMENTED** — on-device Valhalla with native FFI bridge + tile pipeline is a separate upcoming plan. Until that lands, all routing uses `FakeRoutingService` (straight-line great-circle segments, not road-following). |
 | Offline smoke test (`integration_test/offline_smoke_test.dart`) | **WRITTEN, NOT YET RUN** — code complete and `flutter analyze`-clean, but never executed: the dev environment has no mobile device/emulator, and the macOS target needs full Xcode (only the Command Line Tools are installed here). Run it with `-d <device>` to confirm the offline path. |
 | On-device **mobile** visual rendering (Android / iOS) | **NOT YET VERIFIED** — no mobile device was available in the dev environment |
 | Live GPS arrow pointer + follow camera on mobile | **NOT YET VERIFIED** — requires the manual acceptance steps above on a real/emulated device |
@@ -132,5 +155,6 @@ Full design rationale and architecture decisions:
 | Location-permission prompt at fresh install | **NOT YET VERIFIED** — platform channel behavior requires uninstall + reinstall on a real device; structural fix (boot-time `ensurePermission`) is in the widget test suite |
 | Offline search — query/rank logic | **PASS** — unit-tested via `sqflite_common_ffi` (in-memory DB seeded in tests; prefix LIKE, nearest-first ranking, Devanagari script, limit, empty-query short-circuit all covered) |
 | Offline search — on-device DB copy + UI | **NOT YET VERIFIED** — the DB-copy-on-first-launch path and the full search UX (search-as-you-type, destination marker, info card, style-swap persistence, airplane-mode operation) require the manual checklist steps 12–17 above on a real device |
+| Trip planner UI — on-device visual + interaction | **NOT YET VERIFIED** — the on-device trip planner UX (directions button, panel open/close, long-press to add point, mode switching, route line drawing, maneuver list scroll) requires the manual checklist steps 18–26 above on a real device |
 
 The core offline infrastructure (PMTiles reader, local HTTP tile/glyph/style server, asset-copy + version stamp, EMA location smoothing, GeoJSON pointer encoding, `MapStyleResolver`, multi-style server routes) is covered by automated unit/widget tests. All on-device visual behavior — map rendering, GPS arrow, style appearance, live dark-mode switching, and the permission prompt — requires the manual checklist above on a real Android or iOS device.
