@@ -1,8 +1,10 @@
 # Offline Navigator
 
-An offline-first Flutter navigation app for **Android and iOS**. **Milestone 3 (part 1)** adds a **trip planner** — tap the directions button (right-side FABs) to open the trip planner panel. Set a start point (defaults to your location), set a destination via search or by long-pressing the map, and optionally add stops the same way. Choose from four travel modes: car, motorbike, bike, or walk. The planner draws a route line on the map and shows distance, ETA, and a step-by-step maneuver list.
+An offline-first Flutter navigation app for **Android and iOS**. **Milestone 4** adds **turn-by-turn drive mode** and fixes the routing bugs surfaced on the first real Android build. Two fixes: (1) the native router now reads bundled tiles from the correct **`flutter_assets/assets/routing/...`** path — it previously looked in `assets/routing/...`, silently failed, and the planner drew a misleading **straight line** through a blank canvas; (2) there is **no more silent fallback** — a routing failure now shows a **real error** in the planner instead of a fake straight line. With a route planned, tap **Start** to enter drive mode: the camera zooms in, tilts ~60°, and **rotates so your direction of travel is up**, following you. Heading comes from **GPS course while moving** and the **device compass when slow or stopped** (so the map still reorients when you stand still and turn). A top banner shows the next maneuver + distance and advances live; going off-route **auto-reroutes** ("Recalculating…"); **End** exits. This milestone adds the `flutter_compass` dependency and raises the Android minimum to **8.0 (API 26)** (required by `valhalla-mobile`).
 
-> **Important — routing is not yet real road routing.** The route line is currently drawn by a `FakeRoutingService` that connects your points with straight lines (great-circle segments). It does **not** follow roads, paths, or any on-device map data. Real offline road routing powered by on-device Valhalla (native FFI + tile pipeline) is a **separate upcoming plan** that has not yet been built. Everything else — the trip planner UI, travel mode selector, maneuver list display, live-progress logic, and the `RoutingService` interface — is complete and fully tested.
+**Milestone 3** adds a **trip planner** — tap the directions button (right-side FABs) to open the trip planner panel. Set a start point (defaults to your location), set a destination via search or by long-pressing the map, and optionally add stops the same way. Choose from four travel modes: car, motorbike, bike, or walk. The planner draws a route line on the map and shows distance, ETA, and a step-by-step maneuver list.
+
+> **Routing status.** Real offline **road** routing runs on **Android** via the on-device Valhalla engine over bundled Ghatshila tiles (Milestone 3 part 2) — the route follows the road network with a real maneuver list. As of Milestone 4 there is **no silent straight-line fallback**: if the native engine cannot produce a route (e.g. a destination outside the downloaded tiles), the planner shows a **real error**, not a fake line. **iOS** native routing is not yet built (iOS shows that error path until it lands). Routing is bounded to the bundled Ghatshila tiles until the **region download manager** (a later milestone) removes that boundary. `FakeRoutingService` (straight-line) is retained for tests only.
 
 **Milestone 2b** adds **offline destination search** — a search icon opens a full-screen search page that queries a bundled SQLite database of named places, POIs, roads, and water features; results are ranked nearest-first; tapping a result centers the map, drops a destination marker, and shows an info card. All search happens on-device with no network access required.
 
@@ -127,7 +129,15 @@ These steps exercise the full on-device experience that cannot be covered by aut
 
 27. On an **Android** device, plan a trip **inside Ghatshila** and confirm the drawn route **follows roads** (curves along the road network) with a real maneuver list — not a straight diagonal line. This proves the native Valhalla engine ran on-device.
 28. Plan a trip whose destination is **far outside Ghatshila** (e.g. a point hundreds of km away) — confirm it **fails gracefully** ("no route" / "outside the downloaded map area"), not a crash. This is the expected boundary until the region download manager lands.
-29. If the route comes back as a **straight line** on Android, the native engine fell back — check the `flutter run` logs for a `ValhallaPlugin`/MethodChannel error (the most likely cause is the asset path prefix: the plugin opens `assets/routing/...`; if not found it may need the `flutter_assets/` prefix).
+29. The Milestone-4 asset-path fix means a successful route now **follows roads** rather than drawing a straight line. If a route ever fails, the planner shows a **real error** (no silent straight line) — check the `flutter run` logs for a `ValhallaPlugin`/MethodChannel error. (The original straight-line cause was the asset path: the plugin opened `assets/routing/...`; Flutter exposes assets at `flutter_assets/assets/routing/...`, which `ValhallaPlugin.kt` now uses.)
+
+**Turn-by-turn drive mode (Milestone 4 — Android):**
+
+30. On an Android device, plan a route **inside Ghatshila** and confirm it **follows roads** (step 27). Then tap **Start** (the button below the maneuver list) — confirm the UI changes into **drive mode**: the FAB column disappears, the camera **zooms in and tilts** (~60°), and a top **maneuver banner** + a bottom **status bar** (remaining time · distance, recenter, **End**) appear.
+31. **Walk a few metres** (or use mock GPS moving along the route) — confirm the camera **follows you** and **rotates so your heading is up** (the map turns as you change direction; the arrow stays pointing "up the road").
+32. **Stand still and rotate the phone** — confirm the map still **reorients to the compass** heading (this is the magnetometer path that GPS course alone can't provide when stationary). If the device has no compass, the heading simply **holds** its last value (no error).
+33. As you pass each turn, confirm the **banner advances** to the next maneuver and the remaining time/distance **count down**. Tap the bottom **recenter** button after panning — confirm it snaps back to the heading-up follow view.
+34. Deliberately go **off-route** (>~40 m off the line for a few fixes) — confirm the banner shows **"Recalculating…"** and a new route is drawn from your position. If you drive **outside the downloaded tiles**, confirm it shows an **"Off route — …outside the downloaded map area"** message instead of crashing. Tap **End** — confirm drive mode exits, the camera relaxes (flat, zoomed out), and the FABs + planner return.
 
 ---
 
@@ -136,8 +146,10 @@ These steps exercise the full on-device experience that cannot be covered by aut
 Real on-device routing uses the Valhalla engine (`io.github.rallista:valhalla-mobile`) over **bundled
 Ghatshila routing tiles**, reached through a `MethodChannel` (`offline_navigator/valhalla`) — not FFI.
 The Dart side (`ValhallaRoutingService`) builds the Valhalla request, calls the channel, and parses the
-response with the same `parseValhallaRoute` used everywhere; `fallbackToFake: true` keeps the planner
-working (straight-line) if the native engine is unavailable.
+response with the same `parseValhallaRoute` used everywhere. As of Milestone 4 the app constructs it with
+`fallbackToFake: false`, so a native failure surfaces a **real error** rather than a silent straight line
+(the `fallbackToFake` option and `FakeRoutingService` remain for tests). Code-171 ("no route near here")
+maps to a clear "outside the downloaded map area" message.
 
 **Scope (honest):** this proves the engine runs on the phone. It routes **only where tiles exist
 on-device** (currently Ghatshila). "Route any region you pick" requires the **region download manager**
@@ -161,6 +173,33 @@ manual steps 27–29 above.
 
 ---
 
+## Turn-by-turn drive mode (Milestone 4)
+
+Once a route is planned, **Start** enters a heading-up driving experience. The pieces are small and
+testable; `MapScreen` orchestrates them:
+
+- **`NavController`** (`lib/nav/nav_state.dart`) — a `NavState { idle, planning, navigating }` machine
+  holding the active `RoutePlan` and the current maneuver index. `Start` → `startNavigation(plan)`;
+  `End` → `exit()`; clearing the trip → `clear()`. The screen no longer uses a `bool _planning` flag.
+- **`HeadingProvider`** (`lib/nav/heading_provider.dart`) — fuses heading from two sources via the pure
+  `fuseHeading(...)`: **GPS course while moving** (> ~2 m/s) and the **magnetometer** (`flutter_compass`)
+  when slow or stopped; holds the last heading if neither is available. The fused value drives the
+  camera's bearing so the map rotates as you turn.
+- **Drive-mode camera** — on each fix/heading tick the screen calls
+  `animateCamera(center: snapped, zoom: 17, pitch: 60, bearing: heading)`; the flat follow-camera is
+  suppressed while navigating so the two don't fight.
+- **Live progress** (`lib/nav/trip_progress.dart` + `lib/routing/live_progress.dart`) — `advanceTo`
+  picks the nearest maneuver; `remainingDistanceMeters`/`remainingDuration` feed the status bar;
+  `hasArrived` shows "You have arrived"; `isOffRoute` (debounced, 3 consecutive fixes > 40 m) triggers
+  an **auto re-route** from the current position to the destination.
+- **`NavigationOverlay`** (`lib/nav/navigation_overlay.dart`) — the drive-mode UI: a top maneuver banner
+  (icon + instruction + "then …" + distance), a bottom status bar (remaining time · distance, recenter,
+  **End**), and a status flash for "Recalculating…" / arrival. The right-side FAB column is hidden while
+  navigating.
+
+The live camera rotation, compass reorientation, and on-road re-routing are **device-verified** (manual
+steps 30–34); all the logic and the overlay widget are covered by `flutter test`.
+
 ## Architecture
 
 The app is a Flutter UI (`MapScreen` + `TripPlannerPanel`) over focused modules:
@@ -180,12 +219,17 @@ Full design rationale and architecture decisions:
 
 ---
 
-## Verification status (Milestone 3 part 2)
+## Verification status (Milestone 4)
 
 | What | Status |
 |---|---|
 | `flutter analyze` — whole project | **PASS** — "No issues found!" |
-| `flutter test` — 75 unit + widget tests | **PASS** — all 75 passed |
+| `flutter test` — 92 unit + widget tests | **PASS** — all 92 passed |
+| Straight-line routing fix (asset path) | **PASS (code)** — `ValhallaPlugin.kt` now opens `flutter_assets/assets/routing/...`; verified by reading the corrected path + the Docker route check. The on-device "follows roads" confirmation is manual step 27/30. |
+| No silent fallback + clearer errors | **PASS** — `MapScreen` constructs `ValhallaRoutingService(fallbackToFake: false)`; unit-tested that a native failure throws (no fake line) and that code-171 maps to an "outside the downloaded map area" message. |
+| Drive-mode logic (NavController, HeadingProvider, trip-progress) | **PASS** — state-machine transitions, GPS-course/compass heading fusion (`fuseHeading`), remaining distance/ETA, arrival, and off-route detection are all unit-tested. |
+| Drive-mode UI (`NavigationOverlay`, Start button, FAB hide) | **PASS** — widget-tested: the banner shows the right instruction/icon/distance + End; the Start button appears when a route is computed; entering drive mode shows the overlay and hides the FABs. |
+| On-device drive experience (heading-up follow, compass reorient, auto re-route, voice-less banner advance) | **NOT YET VERIFIED** — the live camera rotation, magnetometer reorientation when stationary, and on-road re-routing require the manual acceptance steps 30–34 on a real Android device. |
 | Trip planner UI + domain | **PASS** — routing domain (RoutePlan, polyline decoder, Valhalla-JSON parser, formatters, trip-state reducer, live-progress), `RoutingService` interface, and the trip planner panel are all unit- and widget-tested and green. |
 | Valhalla routing tiles (Ghatshila) | **PASS (verified in Docker)** — `tool/generate_valhalla_tiles.sh` builds the tiles and a test route (Ghatshila 22.586,86.476 → 22.593,86.515) returns status 0, 5.69 km, 7 maneuvers, a road-following polyline. Bundled as `assets/routing/valhalla_tiles.tar` + `admins.sqlite` + `valhalla.json`. |
 | `ValhallaRoutingService` (request / parse / error / fallback) | **PASS** — unit-tested with a mocked MethodChannel: per-mode request JSON, success→RoutePlan, `{code,message}`→RoutingException, and the straight-line fallback when the native side throws. |
