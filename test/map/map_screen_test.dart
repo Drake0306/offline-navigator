@@ -56,4 +56,20 @@ void main() {
     expect(find.byKey(const Key('permActionButton')), findsOneWidget);
     expect(find.text('Open settings'), findsOneWidget);
   });
+
+  testWidgets('layers button opens the style sheet', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
+    await tester.pump();
+    expect(find.byKey(const Key('layersButton')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('layersButton')));
+    await tester.pump(); // start sheet animation
+    await tester.pump(const Duration(milliseconds: 500)); // let it complete
+
+    // Sheet shows all four styles + Auto.
+    expect(find.byKey(const Key('style-standard')), findsOneWidget);
+    expect(find.byKey(const Key('style-dark')), findsOneWidget);
+    expect(find.byKey(const Key('style-roads')), findsOneWidget);
+    expect(find.byKey(const Key('style-auto')), findsOneWidget);
+  });
 }

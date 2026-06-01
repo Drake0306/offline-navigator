@@ -8,6 +8,7 @@ import 'package:maplibre/maplibre.dart';
 import 'package:offline_navigator/location/location_service.dart';
 import 'package:offline_navigator/location/user_location.dart';
 import 'package:offline_navigator/map/map_style.dart';
+import 'package:offline_navigator/map/style_sheet.dart';
 import 'package:offline_navigator/map/user_pointer.dart';
 import 'package:offline_navigator/tiles/tile_service.dart';
 
@@ -145,6 +146,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _manualStyle = manual;
     final os = PlatformDispatcher.instance.platformBrightness;
     _applyStyle(MapStyleResolver.resolve(os, manual));
+  }
+
+  Future<void> _openStyleSheet() async {
+    final choice = await showStyleSheet(
+      context,
+      active: _activeStyle,
+      isAuto: _manualStyle == null,
+    );
+    if (choice == null) return;
+    _onStylePicked(choice.auto ? null : choice.id);
   }
 
   void _toggleTilt() {
@@ -324,6 +335,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                FloatingActionButton.small(
+                  key: const Key('layersButton'),
+                  heroTag: 'layers',
+                  onPressed: _openStyleSheet,
+                  child: const Icon(Icons.layers),
+                ),
+                const SizedBox(height: 12),
                 FloatingActionButton.small(
                   key: const Key('tiltButton'),
                   heroTag: 'tilt',
