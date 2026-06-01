@@ -11,7 +11,7 @@ import 'package:offline_navigator/map/destination_marker.dart';
 import 'package:offline_navigator/map/map_style.dart';
 import 'package:offline_navigator/map/style_sheet.dart';
 import 'package:offline_navigator/map/user_pointer.dart';
-import 'package:offline_navigator/routing/fake_routing_service.dart';
+import 'package:offline_navigator/routing/valhalla_routing_service.dart';
 import 'package:offline_navigator/routing/lat_lng.dart' as domain;
 import 'package:offline_navigator/routing/route_layer.dart';
 import 'package:offline_navigator/routing/route_plan.dart';
@@ -64,7 +64,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   MapStyleId _activeStyle = MapStyleId.standard;
 
   // Trip planner state.
-  final RoutingService _routing = FakeRoutingService();
+  // Real on-device Valhalla routing; falls back to straight-line if the native
+  // engine isn't available (e.g. iOS, or a failed Android build) so the trip
+  // planner is never dead. Routing works only where tiles exist on-device
+  // (currently the bundled Ghatshila region).
+  final RoutingService _routing = ValhallaRoutingService(fallbackToFake: true);
   TripState _trip = const TripState(mode: TravelMode.car);
   RoutePlan? _plan;
   // True only AFTER the route line source+layer are added. Reset to false on
