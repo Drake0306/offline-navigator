@@ -265,11 +265,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final region = _regionById(regionId);
     if (region != null) {
       setState(() => _follow = false);
-      _controller?.animateCamera(
+      _animate(_controller?.animateCamera(
         center:
             Geographic(lon: region.bbox.center.lng, lat: region.bbox.center.lat),
         zoom: 11,
-      );
+      ));
     }
   }
 
@@ -347,10 +347,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _onStylePicked(choice.auto ? null : choice.id);
   }
 
+  /// Fire-and-forget a camera animation, swallowing the "Map camera movement
+  /// cancelled" exception maplibre throws when a later animation supersedes
+  /// this one (normal for the follow camera + region/recenter transitions).
+  void _animate(Future<void>? future) => future?.catchError((Object _) {});
+
   void _toggleTilt() {
     final nowTilted = !_tilted;
     setState(() => _tilted = nowTilted);
-    _controller?.animateCamera(pitch: nowTilted ? 50 : 0);
+    _animate(_controller?.animateCamera(pitch: nowTilted ? 50 : 0));
   }
 
   void _recenter() {
@@ -360,7 +365,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final loc = _lastLoc;
     final target =
         loc != null ? Geographic(lon: loc.lng, lat: loc.lat) : _center;
-    _controller?.animateCamera(center: target, zoom: 14);
+    _animate(_controller?.animateCamera(center: target, zoom: 14));
   }
 
   Future<void> _setupPointer(StyleController style) async {
@@ -506,10 +511,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
     // The follow camera should track the user regardless of pointer readiness.
     if (_follow && _nav.state != NavState.navigating) {
-      _controller?.animateCamera(
+      _animate(_controller?.animateCamera(
         center: Geographic(lon: loc.lng, lat: loc.lat),
         nativeDuration: _followDuration,
-      );
+      ));
     }
     if (_nav.state == NavState.navigating) {
       _heading?.onUserLocation(loc.headingDeg, loc.speedMps);
@@ -611,10 +616,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _destination = result;
       _follow = false;
     });
-    _controller?.animateCamera(
+    _animate(_controller?.animateCamera(
       center: Geographic(lon: result.lng, lat: result.lat),
       zoom: 16,
-    );
+    ));
     if (_destReady) {
       _style?.updateGeoJsonSource(
         id: DestinationMarker.sourceId,
@@ -668,13 +673,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (loc == null || controller == null || _nav.state != NavState.navigating) {
       return;
     }
-    controller.animateCamera(
+    _animate(controller.animateCamera(
       center: Geographic(lon: loc.lng, lat: loc.lat),
       zoom: 17,
       pitch: 60,
       bearing: _bearing,
       nativeDuration: const Duration(milliseconds: 700),
-    );
+    ));
   }
 
   void _onNavTick(domain.LatLng pos) {
@@ -906,7 +911,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     _offRouteHits = 0;
                   });
                   _nav.exit();
-                  _controller?.animateCamera(pitch: 0, zoom: 15, bearing: 0);
+                  _animate(_controller?.animateCamera(pitch: 0, zoom: 15, bearing: 0));
                 },
               ),
             ),
