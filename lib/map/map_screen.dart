@@ -49,7 +49,10 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.autoStart) _boot();
+    if (widget.autoStart) {
+      _boot();
+      _initLocation();
+    }
   }
 
   Future<void> _boot() async {
@@ -66,6 +69,29 @@ class _MapScreenState extends State<MapScreen> {
       if (!mounted) return;
       setState(() => _bootError = 'Could not load the offline map.\n$e');
     }
+  }
+
+  /// Requests location permission at startup, independent of map-style
+  /// loading. This is the fix for the prompt not appearing: previously the
+  /// request was buried in _setupPointer (only reached via onStyleLoaded).
+  Future<void> _initLocation() async {
+    try {
+      final state = await _location.ensurePermission();
+      if (!mounted) return;
+      if (state == LocationPermissionState.granted) {
+        await _startLocationStream();
+      } else {
+        setState(() => _permIssue = state);
+      }
+    } catch (e) {
+      debugPrint('Location init failed: $e');
+    }
+  }
+
+  Future<void> _startLocationStream() async {
+    await _location.start();
+    await _locSub?.cancel();
+    _locSub = _location.positions.listen(_onLocation);
   }
 
   void _retryBoot() {
@@ -139,21 +165,6 @@ class _MapScreenState extends State<MapScreen> {
       debugPrint('Pointer setup failed: $e');
       return;
     }
-
-    // 4. Request permission and start the location stream.
-    try {
-      final permState = await _location.ensurePermission();
-      if (permState == LocationPermissionState.granted) {
-        await _location.start();
-        await _locSub?.cancel();
-        _locSub = _location.positions.listen(_onLocation);
-      } else {
-        // Drives the permission banner.
-        if (mounted) setState(() => _permIssue = permState);
-      }
-    } catch (e) {
-      debugPrint('Location startup failed: $e');
-    }
   }
 
   void _onLocation(UserLocation loc) {
@@ -212,8 +223,7 @@ class _MapScreenState extends State<MapScreen> {
                     if (!mounted) return;
                     if (s == LocationPermissionState.granted) {
                       setState(() => _permIssue = null);
-                      await _location.start();
-                      _locSub = _location.positions.listen(_onLocation);
+                      await _startLocationStream();
                     }
                   }
                 },

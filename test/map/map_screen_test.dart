@@ -45,4 +45,15 @@ void main() {
     expect(find.byKey(const Key('retryBootButton')), findsOneWidget);
     expect(find.text('Could not load the offline map.'), findsOneWidget);
   });
+
+  testWidgets('permission banner Grant button present when denied', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: MapScreen(autoStart: false)));
+    await tester.pump();
+    final dynamic state = tester.state(find.byType(MapScreen));
+    // ignore: invalid_use_of_visible_for_testing_member
+    state.showPermissionIssueForTest(LocationPermissionState.deniedForever);
+    await tester.pump();
+    expect(find.byKey(const Key('permActionButton')), findsOneWidget);
+    expect(find.text('Open settings'), findsOneWidget);
+  });
 }
