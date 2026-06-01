@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:maplibre/maplibre.dart';
 import 'package:offline_navigator/location/location_service.dart';
 import 'package:offline_navigator/location/user_location.dart';
+import 'package:offline_navigator/map/map_style.dart';
 import 'package:offline_navigator/map/user_pointer.dart';
 import 'package:offline_navigator/tiles/tile_service.dart';
 
@@ -20,7 +22,7 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final _tiles = TileService();
   final _location = LocationService();
   MapController? _controller;
@@ -31,6 +33,9 @@ class _MapScreenState extends State<MapScreen> {
   UserLocation? _lastLoc;
   bool _pointerReady = false;
   bool _tilted = false;
+  MapReady? _ready;
+  MapStyleId? _manualStyle; // null = follow OS brightness (Auto)
+  MapStyleId _activeStyle = MapStyleId.standard;
 
   /// How long the follow-camera takes to glide to each new GPS fix. Short
   /// enough to keep up with ~1 fix/sec without the 2s default piling up and
@@ -49,6 +54,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.autoStart) {
       _boot();
       _initLocation();
@@ -59,8 +65,12 @@ class _MapScreenState extends State<MapScreen> {
     try {
       final ready = await _tiles.ensureReady();
       if (!mounted) return;
+      final os = PlatformDispatcher.instance.platformBrightness;
+      final active = MapStyleResolver.resolve(os, _manualStyle);
       setState(() {
-        _styleUrl = ready.styleUrl;
+        _ready = ready;
+        _activeStyle = active;
+        _styleUrl = ready.styleUrlFor(active);
         _bootError = null;
       });
     } catch (e) {
@@ -101,10 +111,40 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _locSub?.cancel();
     _location.dispose();
     _tiles.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    // Only auto-follow when the user hasn't manually picked a style.
+    if (_manualStyle != null) return;
+    final os = PlatformDispatcher.instance.platformBrightness;
+    _applyStyle(MapStyleResolver.resolve(os, null));
+  }
+
+  /// Switches the map to [id] via setStyle. setStyle re-fires onStyleLoaded
+  /// (which re-adds the pointer), and clears runtime layers — so reset the
+  /// pointer guard first. No-ops if the style is already active or the map
+  /// isn't ready.
+  void _applyStyle(MapStyleId id) {
+    final ready = _ready;
+    final controller = _controller;
+    if (ready == null || controller == null) return;
+    if (id == _activeStyle) return;
+    setState(() => _activeStyle = id);
+    _pointerReady = false; // setStyle clears added layers; allow re-add
+    controller.setStyle(ready.styleUrlFor(id));
+  }
+
+  /// Called by the style picker. A null pick means "reset to Auto".
+  void _onStylePicked(MapStyleId? manual) {
+    _manualStyle = manual;
+    final os = PlatformDispatcher.instance.platformBrightness;
+    _applyStyle(MapStyleResolver.resolve(os, manual));
   }
 
   void _toggleTilt() {
